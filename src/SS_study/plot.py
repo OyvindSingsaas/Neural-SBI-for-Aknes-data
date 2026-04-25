@@ -18,6 +18,16 @@ rmse_list_abc = results["rmse_list_abc"]
 rmse_list_nf = results["rmse_list_nf"]
 x_vals = results["x_vals"]
 
+path_NCL = "neural_networks/SS_sensitivity_4/rmse_results_ncl.npz"
+results_NCL = np.load(path_NCL, allow_pickle=True)
+rmse_list_NCL_3 = results_NCL["rmse_list_NCL"]
+x_vals_NCL = results_NCL["x_vals"]
+
+mse = np.array([0.043368027293873276, 0.0420326122889147, 0.049438600007539094, 0.050306046088488515, 0.0461735203465074, 0.04508248895234812, 0.05400431718241135, 0.07900731985533094, 0.07661735680946181, 0.17328884908887748])
+rmse_list_NCL_2 = np.sqrt(mse)
+
+#Set plotting settings to make the plots look nicer with larger font size and thicker lines
+plt.rcParams.update({'font.size': 14, 'lines.linewidth': 2, 'axes.linewidth': 1.5})
 
 
 #plot mse vs rk evaluations for both normalized and unnormalized parameters in two separate figures
@@ -25,12 +35,17 @@ x_vals = results["x_vals"]
 #N_rk = np.linspace(0, RK_n-2, 10, dtype=int ) #number of RK evaluations to drop in the summary statistics, evenly spaced between the minimum and maximum cluster bin values
 #x_vals = RK_n - N_rk
 plt.figure()
-plt.plot(x_vals,rmse_list_NCL, marker = "o")
-plt.plot(x_vals,rmse_list_nf, marker = "o")
-plt.xlabel("Number of K-function evaluations included in summary statistics")
-plt.ylabel("MSE")
+#plt.plot(x_vals,rmse_list_NCL, marker = "o", label="NCL")
+plt.plot(x_vals,rmse_list_sub_model, marker = "o", label="sub model")
+plt.plot(x_vals_NCL,rmse_list_NCL_3, marker = "o", label="NCL")
+plt.plot(x_vals,rmse_list_nf, marker = "o", label="NF")
+plt.plot(x_vals,rmse_list_abc, marker = "o", label="ABC")
+plt.xlabel("Number of K-function evaluations included")
+plt.ylabel("RMSE")
 plt.grid()
-plt.legend()
+#right centre legend
+plt.legend(loc='center right', bbox_to_anchor=(1.0, 0.7))
 plt.xticks(x_vals)
 plt.savefig("neural_networks/SS_sensitivity_4/MSE_vs_RK_unnormalized.png")
+plt.xlim(0, 20)
 plt.close()

@@ -33,7 +33,7 @@ df_metro = pd.DataFrame(data['df_metro_values'],
                     columns=data['df_metro_columns'],
                     index=data['df_metro_index'])
 print("Data loaded successfully.")
-N_train = 100
+N_train = 500
 year = [2023]
 gs = len(SS_0_train_normalized_neural[0])  # Dimension of summary statistics
 print("Dimension of summary statistics:", gs)
@@ -46,16 +46,20 @@ print("Posterior loaded successfully.")
 print("\nSampling from the normalizing flow posterior...")
 SS_nf = torch.tensor(SS_0_test_normalized_neural[response_test == 1], dtype=torch.float32)
 print("SS_nf shape:", SS_nf.shape)
-N_posteriosr_samples = 100
+N_posteriosr_samples = 1000
 posterior_samples_normalized = np.zeros((N_train, N_posteriosr_samples, len(l_bounds_NS)))
+nf_map_normalized = np.zeros((N_train, len(l_bounds_NS)))
 for i, ss in enumerate(SS_nf[:N_train]):
+    posterior_x = posterior.set_default_x(ss)
+    nf_map_normalized[i] = posterior_x.map().numpy()
     posterior_samples_normalized[i] = posterior.sample((N_posteriosr_samples,), x=ss).numpy()
     if i % (N_train//10) == 0:
             print(round(i/N_train*100), "% done")
 
+nf_map = nf_map_normalized * params_std + params_mean
 postetrior_samples = posterior_samples_normalized * params_std + params_mean
 print("\nComputing MAP estimate from the normalizing flow posterior...")
-nf_map_normalized = np.mean(posterior_samples_normalized, axis=1)#posterior.map(x=SS_nf)
-nf_map = nf_map_normalized * params_std + params_mean
+nf_mean_normalized = np.mean(posterior_samples_normalized, axis=1)#posterior.map(x=SS_nf)
+nf_mean = nf_map_normalized * params_std + params_mean
 #save the samples and MAP estimate
 np.savez("results/sim_study/nf.npz", posterior_samples=postetrior_samples, posterior_samples_normalized =  posterior_samples_normalized, nf_map=nf_map, nf_map_normalized=nf_map_normalized, N_train=N_train, true=true, true_normalized=true_normalized)

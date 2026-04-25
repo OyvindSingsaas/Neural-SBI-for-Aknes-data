@@ -7,6 +7,8 @@ import json
 from tensorflow.keras.models import load_model
 import utils.utils_surface_NS as us
 import tensorflow as tf
+tf.keras.backend.set_floatx("float32")
+tf.config.optimizer.set_experimental_options({"disable_meta_optimizer": True})  # workaround
 
 def get_neg_hessian(theta_MLE, x_fixed, gs, classification_NN, p):
     theta_MLE = tf.Variable(tf.reshape(theta_MLE, (1, -1)))
@@ -29,6 +31,25 @@ def get_neg_hessian(theta_MLE, x_fixed, gs, classification_NN, p):
 
     #print("Hessian: \n", hessian.numpy())
     return hessian, grad.numpy()[0]
+
+def get_neg_hessian(theta_MLE, x_fixed, gs, classification_NN, p):
+    theta_MLE = tf.Variable(tf.convert_to_tensor(np.reshape(theta_MLE, (1, -1)), dtype=tf.float32))
+    x_fixed = tf.convert_to_tensor(np.reshape(x_fixed, (1, gs)), dtype=tf.float32)
+
+    with tf.GradientTape(persistent=True) as tape1:
+        tape1.watch(theta_MLE)
+        with tf.GradientTape() as tape2:
+            tape2.watch(theta_MLE)
+            output = classification_NN(
+                {"input_layer_1": x_fixed, "input_layer_2": theta_MLE},
+                training=False
+            )
+        grad = tape2.gradient(output, theta_MLE)
+
+    hessian = -tape1.jacobian(grad, theta_MLE, experimental_use_pfor=False)
+    hessian = tf.reshape(hessian, (p, p))
+    del tape1
+    return hessian.numpy(), grad.numpy()[0]
 
 def godambe_G_NS(N_G, theta_0, params_mean, params_std, gs, year, p, T, cluster_bins, percentiles, df_metro, classification_NN_NS, SS_mean, SS_std, plot = False):
 
@@ -102,7 +123,7 @@ df_metro = pd.DataFrame(data['df_metro_values'],
                     columns=data['df_metro_columns'],
                     index=data['df_metro_index'])
 print("Data loaded successfully.")
-N_train = 100
+N_train = 500
 year = [2023]
 gs = len(SS_0_train_normalized_neural[0])  # Dimension of summary statistics
 p = len(l_bounds_NS)  # Number of parameters
@@ -111,7 +132,7 @@ true_normalized = params_test_normalized[response_test == 1][:N_train,:]
 true = true_normalized * params_std + params_mean
 
 print("\nLoading trained neural network for NCL...")
-classification_NN_NS = load_model("neural_networks/classification_NN_NS.h5")
+classification_NN_NS = load_model("neural_networks/classification_NN_NS.h5", compile=False)
 print("Model loaded successfully.")
 print("\nPredicting parameters using the neural network model...")
 N_grid = 1000
@@ -120,12 +141,25 @@ ncl_mle = np.zeros((N_train, len(l_bounds_NS)))
 G_inv_NS_ray = []
 H_neg_NS_ray = []
 not_converged_index = []
+
+grid = us.LHS(N_grid, l_bounds_NS, u_bounds_NS, year)[:,:-1]
+grid_norm = (grid - params_mean) / params_std
 for i in range(N_train):
     if i % (N_train//10) == 0:
         print("\n",round(i/N_train*100), "% done\n")
-    grid = us.LHS(N_grid, l_bounds_NS, u_bounds_NS, year)[:,:-1]
-    grid_norm = (grid - params_mean) / params_std
-    ll_grid = classification_NN_NS.predict([SS_0_test_normalized_neural[response_test==1][i].reshape((1,-1)).repeat(N_grid, axis = 0), grid_norm]).reshape(-1)  
+
+    #ll_grid = classification_NN_NS.predict([SS_0_test_normalized_neural[response_test==1][i].reshape((1,-1)).repeat(N_grid, axis = 0), grid_norm]).reshape(-1)  
+    
+    # replace .predict(...) inside loop
+    x_obs = SS_0_test_normalized_neural[response_test == 1][i].reshape(1, -1).astype(np.float32)
+    x_obs = np.repeat(x_obs, N_grid, axis=0)
+    grid_norm = ((grid - params_mean) / params_std).astype(np.float32)
+
+    ll_grid = classification_NN_NS(
+        {"input_layer_1": x_obs, "input_layer_2": grid_norm},
+        training=False
+    ).numpy().reshape(-1)
+    
     start = grid_norm[np.argmax(ll_grid)]
     MLE_NCL, MLE_NCL_normalized, final_logit, _, end_state = us.numerical_optim(start, SS_0_test_normalized_neural[response_test==1][i], l_bounds_NS, u_bounds_NS, classification_NN_NS, gs, params_mean=params_mean, params_std=params_std)
     

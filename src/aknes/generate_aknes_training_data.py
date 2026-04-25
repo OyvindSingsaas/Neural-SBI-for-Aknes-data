@@ -35,8 +35,8 @@ def main():
     scale = max(temp.max(), -temp.min())  # symmetric scaling
     df_metro['temperature'] = temp / scale
     df_metro.head()
-    """
-    catalogue_path = "Surface_Catalogues"
+    
+    catalogue_path = "data/Surface_Catalogues"
     df_events = us.read_cataloge(catalogue_path)
     df_events.sort_index(inplace=True) #Sortere etter tidspunktet for observasjon i tilfelle det ble feil under nedlastning
     df_events.index = df_events.index.tz_localize(None)
@@ -47,7 +47,7 @@ def main():
     timestamps = timestamps[(timestamps < df_metro.index.max()) & (timestamps > df_metro.index.min())]
     print("Date range:", np.min(df_events.index), "  to  ", np.max(df_events.index))
     year_dict = {}
-    """
+    
     col_names_params_NS = [
         r"$\log(\delta)$",
         r"$\log(\sigma^2)$",
@@ -59,23 +59,24 @@ def main():
         r"$\beta_5$",
         r"$\beta_6$"
     ]
+    years = df_metro.index.year.unique().values[1:-1]
+    years = years[years!=2019]
+    years = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
+
     J_train = 10000
     J_test = 100
     K = 3
-    T = 1*365
+    T = len(years) * 365
     error = 0.0
     print("Generating data for NS model with J_train =", J_train, ", J_test =", J_test, ", K =", K, ", T =", T, ", error =", error)
     #log(delta), log(sigma^2), beta_0, beta_1, beta_2, beta_3, beta_4, beta_5, beta_6
-    l_bounds_NS = np.array([np.log(0.1), np.log(0.001), -2.5, -2.5, -2.5])
-    u_bounds_NS = np.array([np.log(10),  np.log(3),  2.5, 2.5, 2.5])
+    l_bounds_NS = np.array([np.log(0.01), np.log(0.001), -3., -2., -2., -1])
+    u_bounds_NS = np.array([np.log(10),  np.log(3),  2., 1, 1, 3])
 
-    l_bounds_NS_test = np.array([np.log(1), np.log(0.01), -1, -1, -1])
-    u_bounds_NS_test = np.array([np.log(3),  np.log(2),  1, 1, 1])
+    l_bounds_NS_test = np.array([np.log(1), np.log(0.01), -1, -1, -1, -1])
+    u_bounds_NS_test = np.array([np.log(3),  np.log(2),  1, 1, 1, 3])
 
     p = len(l_bounds_NS)
-    years = df_metro.index.year.unique().values[1:-1]
-    years = years[years!=2019]
-    years = [2023]
 
     params_sample_train_NS = us.LHS(J_train, l_bounds_NS, u_bounds_NS, years)
     params_sample_test_NS = us.LHS(J_test, l_bounds_NS_test, u_bounds_NS_test, years)
@@ -89,7 +90,7 @@ def main():
     print("Data shape = ", len(X_train))
 
     percentiles = [10, 50, 90]
-    cluster_bins = np.logspace(np.log10(0.001), np.log10(10), 20)
+    cluster_bins = np.logspace(np.log10(0.001), np.log10(10), 10)
     #cluster_bins = [0.001, 0.01, 0.1, 0.5, 1., 5., 10.]
 
     gs = len(l_bounds_NS) + len(cluster_bins) + len(percentiles) - 1 
@@ -161,7 +162,7 @@ def main():
     #Data to save: params_train_normalized, SS_0_train_normalized_neural, response_train,
     #  params_test_normalized, SS_0_test_normalized_neural, response_test,
     #  params_mean, params_std, SS_mean, SS_std
-    np.savez('data/NS_data_SS_study.npz', params_train_normalized=params_train_normalized, SS_0_train_normalized_neural=SS_0_train_normalized_neural, response_train=response_train,
+    np.savez('data/aknes_training_data.npz', params_train_normalized=params_train_normalized, SS_0_train_normalized_neural=SS_0_train_normalized_neural, response_train=response_train,
              params_test_normalized=params_test_normalized, SS_0_test_normalized_neural=SS_0_test_normalized_neural, response_test=response_test,
              params_mean=params_mean, params_std=params_std, SS_mean=SS_mean, SS_std=SS_std, l_bounds_NS = l_bounds_NS, u_bounds_NS = u_bounds_NS,
              l_bounds_NS_test = l_bounds_NS_test, u_bounds_NS_test = u_bounds_NS_test, T = T, cluster_bins = cluster_bins, percentiles = percentiles, col_names_params_NS = col_names_params_NS,

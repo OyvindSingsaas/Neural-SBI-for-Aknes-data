@@ -78,7 +78,10 @@ def abc_distance(SS, SS_obs, a, b, var_theta):
     distance = np.sum((theta_hat - a) ** 2 / var_theta)
     return distance
 
-def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds, df_metro, T, cluster_bins, percentiles, SS_mean, SS_std, epsilon_percentile = 1, lasso_penalty = 0.01):
+def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds,
+                   df_metro, T, cluster_bins, percentiles, SS_mean,
+                     SS_std, epsilon_percentile = 1, lasso_penalty = 0.01,
+                     theta_pilot = None, SS_pilot = None, return_pilot = False, SS_index_drop = None):
     """
     Perform a pilot run for ABC to estimate the empirical variance of the parameter vectors.
 
@@ -94,21 +97,28 @@ def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds, df_metro, T, clus
     numpy.ndarray var_theta: Empirical variance of the accepted parameter vectors.
     numpy.ndarray epsilon: Tolerance level given epsilon_percentile
     """
+    if theta_pilot is None and SS_pilot is None:
+        print("Running ABC pilot run with k_pilot =", k_pilot)
+        theta_pilot = np.zeros((k_pilot, dim))  # Placeholder for parameter vectors from pilot run
+        SS_pilot = [] # Placeholder for summary statistics from pilot run
+        for k in range(k_pilot):
+            n = 0
+            while n<m:
+                theta = abc_prior(1, l_bounds=l_bounds, u_bounds=u_bounds) #sample theta from the prior distribution
+                x, y, metro_year = sample_data(theta, df_metro, T, 1) #sample data from the model using theta
+                SS = compute_summary_statistics(x[0], T, cluster_bins, percentiles, df_metro, metro_year[0], dim) #compute summary statistics for the simulated data
+                SS = (SS - SS_mean)/SS_std
 
-    theta_pilot = np.zeros((k_pilot, dim))  # Placeholder for parameter vectors from pilot run
-    SS_pilot = np.zeros((k_pilot, len(SS_obs)))  # Placeholder for summary statistics from pilot run
-    for k in range(k_pilot):
-        n = 0
-        while n<m:
-            theta = abc_prior(1, l_bounds=l_bounds, u_bounds=u_bounds) #sample theta from the prior distribution
-            x, y, metro_year = sample_data(theta, df_metro, T, 1) #sample data from the model using theta
-            SS = compute_summary_statistics(x[0], T, cluster_bins, percentiles, df_metro, metro_year[0], dim) #compute summary statistics for the simulated data
-            SS = (SS - SS_mean)/SS_std
-
-            n = len(x[0]) #number of points in simulated data
-        theta_pilot[k] = theta  # Store the accepted parameter vector
-        SS_pilot[k] = SS  # Store the summary statistics for the accepted parameter vector
-
+                n = len(x[0]) #number of points in simulated data
+            theta_pilot[k] = theta  # Store the accepted parameter vector
+            SS_pilot.append(SS)  # Store the summary statistics for the accepted parameter vector
+        SS_pilot = np.array(SS_pilot)
+        if SS_index_drop is not None:
+            print("Old shape of SS_pilot:", SS_pilot.shape)
+            SS_pilot = np.delete(SS_pilot, SS_index_drop, axis=1) #Drop the specified summary statistic from the pilot data, to match the summary statistics used in the ABC rejection sampling step
+            print("New shape of SS_pilot:", SS_pilot.shape)
+    else:
+        print("Using provided pilot data with SS_pilot shape:", SS_pilot.shape, " and theta_pilot shape:", theta_pilot.shape)
     #Lasso regression to find a and b for the linear model
     X = SS_pilot - SS_obs
     Y = theta_pilot
@@ -137,10 +147,13 @@ def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds, df_metro, T, clus
     # Compute empirical variance of the fitted parameter vectors from the pilot run
     var_theta = np.var(theta_pilot_hat, axis=0)
     # Compute the tolerance level based on the specified percentile
-    epsilon = np.percentile([abc_distance(SS_pilot[i], SS_obs, a_array, b_array, var_theta) for i in range(k_pilot)], epsilon_percentile)  
-    return var_theta, epsilon, a_array, b_array
+    epsilon = np.percentile([abc_distance(SS_pilot[i], SS_obs, a_array, b_array, var_theta) for i in range(k_pilot)], epsilon_percentile)
+    if return_pilot:
+        return var_theta, epsilon, a_array, b_array, theta_pilot, SS_pilot
+    else:
+        return var_theta, epsilon, a_array, b_array
 
-def abc_rejection_sampling(k_abc, SS_obs, epsilon, m, dim, a_array, b_array, var_theta, l_bounds, u_bounds, df_metro, T, cluster_bins, percentiles, SS_mean, SS_std, max_iter = 1000):
+def abc_rejection_sampling(k_abc, SS_obs, epsilon, m, dim, a_array, b_array, var_theta, l_bounds, u_bounds, df_metro, T, cluster_bins, percentiles, SS_mean, SS_std, max_iter = 1000, SS_index_drop = None):
     """
     Perform ABC rejection sampling to obtain parameter vectors that are close to the observed summary statistics.
     Parameters:
@@ -181,6 +194,8 @@ def abc_rejection_sampling(k_abc, SS_obs, epsilon, m, dim, a_array, b_array, var
                 x, y, metro_year = sample_data(theta, df_metro, T, n = 1) #sample data from the model using theta
                 SS = compute_summary_statistics(x[0], T, cluster_bins, percentiles, df_metro, metro_year[0], dim) #compute summary statistics for the simulated data
                 SS = (SS - SS_mean)/SS_std
+                if SS_index_drop is not None:
+                    SS = np.delete(SS, SS_index_drop) 
         
                 n = len(x[0]) #number of points in simulated data
                 # Compute the distance between the simulated summary statistics and the observed summary statistics

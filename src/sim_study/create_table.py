@@ -45,7 +45,7 @@ def main():
 	# NCL, Uncalibrated
 	lines.append(format_row("NCL,", "Bias", ncl['bias']))
 	mse_with_se_ncl = [f"{mse:.3f} ({se:.3f})" for mse, se in zip(ncl['rmse_paramwise'], ncl['rmse_paramwise_error'])]
-	lines.append(format_row("Uncalibrated", "RMSE", mse_with_se_ncl))
+	lines.append(format_row("Uncal.", "RMSE", mse_with_se_ncl))
 	lines.append(format_row("", "Coverage", ncl_cov))
 	lines.append(format_row("", "CI Len.", ncl_ci))
 	lines.append(r"\hline")

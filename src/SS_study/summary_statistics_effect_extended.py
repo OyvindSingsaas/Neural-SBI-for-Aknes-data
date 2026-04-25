@@ -45,6 +45,8 @@ import torch
 
 # === Local imports ===
 import utils.utils_surface_NS as us
+import utils.utils_abc as abc
+
 
 
 def main():
@@ -88,7 +90,7 @@ def main():
 
     RK_n = len(cluster_bins) #number of RK evaluations in summary statistics
     #Indexes corresponing ro RK evaluations in summary statistics (the RK_n entries in the summary statistics vector leading up to but excluding the last element)
-    RK_indexes = np.arange(gs_total - RK_n - 1, gs_total - 1) 
+    RK_indexes = np.arange(gs_total - RK_n - 2, gs_total - 2) 
     RK_range = cluster_bins[-1] - cluster_bins[0]
 
     print("Total dimension of summary statistics:", gs_total)
@@ -99,7 +101,7 @@ def main():
     rmse_list_sub_model = [] #un-normalized mse
     rmse_list_nf = [] #un-normalized mse
     rmse_list_abc = [] #un-normalized mse
-    N_test = 5
+    N_test = 50
     year = [2023]
     N_posterior_samples = 100
     posterior_samples_nf_normalized = np.zeros((N_test, N_posterior_samples, len(l_bounds_NS)))
@@ -107,8 +109,21 @@ def main():
     posterior = torch.load("neural_networks/trained_posterior_NS.pt")
     print("Posterior loaded successfully.")
 
-    N_rk = np.linspace(0, RK_n-2, 2, dtype=int) #number of RK evaluations to drop in the summary statistics, evenly spaced between the minimum and maximum cluster bin values
+    N_rk = np.linspace(0, RK_n-2, 10, dtype=int) #number of RK evaluations to drop in the summary statistics, evenly spaced between the minimum and maximum cluster bin values
     print("Dropping plan. N_rk:", N_rk)
+    print("NUmber included plan: ", RK_n - N_rk)
+    run_abc = False
+    run_NF = True
+
+    #ABC configuration parameters
+    k_pilot = 1000  # Number of pilot simulations
+    k_abc = 100  # Number of posterior samples to obtain from ABC
+    m = 50  # Number of data points for each simulation
+    epsilon_percentile = 1  # Percentile for determining the tolerance level (epsilon) in ABC rejection sampling
+    lasso_penalty = 0.1  # Lasso penalty for linear regression in the pilot run
+    dim = len(l_bounds_NS)  # Dimensionality of the parameter space
+    max_iter = 10000  # Maximum number of iterations to prevent infinite loops in rejection sampling
+    year = [2023]
     #N_runs different summary statistic configurations with increasing resolution
     for k, n_rk in enumerate(N_rk):
         gs = gs_total - n_rk  # Dimension of summary statistics for the current run, starting with all RK evaluations and removing one RK evaluation at a time
@@ -131,10 +146,13 @@ def main():
         params_test_nf = torch.tensor(params_test_normalized[response_test == 1], dtype=torch.float32)
         params_train_nf = torch.tensor(params_train_normalized[response_train == 1], dtype=torch.float32)
 
+        SS_abc_test = SS_0_test_normalized_neural_temp[response_test == 1]
+
         SS_mean_temp = np.delete(SS_mean, dropped_RK_indexes, axis=0)
         SS_std_temp = np.delete(SS_std, dropped_RK_indexes, axis=0)
 
         #Define the sub-model for NS, trained on point prediction task
+        print("\nTraining sub-model for NS...")
         x_global_input = Input(shape=(gs,))
 
         x = Dense(32, activation='tanh')(x_global_input)
@@ -148,32 +166,19 @@ def main():
         initial_learning_rate = 0.001
         optimizer = keras.optimizers.Adam(learning_rate=initial_learning_rate)
         sub_model_NS.compile(optimizer=optimizer, loss="mse")
-        sub_model_NS.summary()
-
         #train sub-model for NS
         params_train_pre, params_test_pre, X_global_train_pre, X_global_test_pre = params_train_normalized[response_train==1], params_test_normalized[response_test==1], SS_0_train_normalized_neural_temp[response_train==1], SS_0_test_normalized_neural_temp[response_test==1]
         ES_NS =keras.callbacks.EarlyStopping("val_loss", patience=15, verbose = 1, restore_best_weights=True)
 
-        history = sub_model_NS.fit(X_global_train_pre, params_train_pre, epochs=500, batch_size=100, verbose = 1, validation_split=0.1, callbacks=[ES_NS])
+        history = sub_model_NS.fit(X_global_train_pre, params_train_pre, epochs=500, batch_size=100, verbose = 0, validation_split=0.1, callbacks=[ES_NS])
 
-        plt.figure()
-        plt.plot(history.history["loss"], label = "Loss")
-        plt.plot(history.history["val_loss"], label = "Val_loss")
-        plt.legend()
-        #save the plot
-        try:
-            plt.suptitle(f"RK evaluations included: {cluster_bins[cluster_bin_indexes]} and above")
-        except:
-            plt.suptitle(f"No RK evaluations included")
-
-        #plt.savefig(f"neural_networks/SS_sensitivity_3/sub_model_NS_training_curve_{k}.png")
-        plt.close()
 
         Y_pred = sub_model_NS.predict(X_global_test_pre)
         Y_pred_unnormalized = Y_pred * params_std + params_mean
         params_test_pre_unnormalized = params_test_pre * params_std + params_mean
         rmse_list_sub_model.append(np.sqrt(mean_squared_error(params_test_pre_unnormalized, Y_pred_unnormalized)))
         n_params = len(l_bounds_NS)
+        """        
         fig, axs = plt.subplots(1, n_params, figsize=(4*n_params, 4))
         if n_params == 1:
             axs = [axs]
@@ -190,82 +195,111 @@ def main():
         except:            plt.suptitle(f"No RK evaluations included")
         plt.savefig(f"neural_networks/SS_sensitivity_4/sub_model_NS_prediction_all_{k}.png")
         plt.close()
-
+        """
         #Define full model for NS, which takes both summary statistics and parameters as input and outputs the probability of response = 1. The sub-model is included in the full model and is not trainable during training of the full model.
         sub_model_clone_NS  = keras.models.clone_model(sub_model_NS)
         sub_model_clone_NS.set_weights(sub_model_NS.get_weights())
         sub_model_clone_NS_cutted = Model(sub_model_clone_NS.inputs, sub_model_clone_NS.layers[-1].output)
-
         for layer in sub_model_clone_NS_cutted.layers:
             layer.trainable = False
-
         Input_summary_statistics = Input(shape=(gs,))
         Input_parameters = Input(shape=(len(u_bounds_NS),))
-
         #sub_model_output = sub_model_clone_cutted(Input_summary_statistics)
         sub_model_NS_output = Sequential(sub_model_clone_NS_cutted.layers)(Input_summary_statistics)
-
         concatenated = Concatenate(name = "Combine")([Input_summary_statistics, Input_parameters, sub_model_NS_output])
-
         x = Dense(32, activation='tanh', name = "First_dense")(concatenated)
         x = Dense(16, activation='tanh')(x)
         x = Dense(64, activation='tanh')(x)
         x = Dense(32, activation='tanh')(x)
-
         output = Dense(1, activation='linear')(x)  
-
         # Model definition
         classification_NN_NS = Model([Input_summary_statistics, Input_parameters], output)
-
         # Compile the model
-        initial_learning_rate = 0.001
-
+        initial_learning_rate = 0.0001
         optimizer = keras.optimizers.Adam(learning_rate=initial_learning_rate)
         classification_NN_NS.compile(optimizer=optimizer, loss=keras.losses.BinaryCrossentropy(from_logits=True))
         classification_NN_NS.summary()
-
         #classification_NN_NS.optimizer.learning_rate.assign(0.001)
         ES =keras.callbacks.EarlyStopping("val_loss", patience=20, verbose = 1, restore_best_weights=True)
-        history = classification_NN_NS.fit([SS_0_train_normalized_neural_temp, params_train_normalized], response_train, epochs=500, batch_size=32, verbose = 1, validation_split=0.1, callbacks=[ES])#sample_weight=d_e)
+        history = classification_NN_NS.fit([SS_0_train_normalized_neural_temp, params_train_normalized], response_train, epochs=500, batch_size=32, verbose = 0, validation_split=0.1, callbacks=[ES])#sample_weight=d_e)
 
 
         N_grid = 1000
         grid = us.LHS(N_grid, l_bounds_NS, u_bounds_NS, year)[:,:-1]
         grid_norm = (grid - params_mean) / params_std
         mle_ncl = np.zeros((N_test, len(l_bounds_NS)))
+        converged_index = []
+        print("\nPredicting parameters using the neural network model...")
         for i in range(N_test):
-            print("\nPredicting parameters using the neural network model...")
-
             ll_grid = classification_NN_NS.predict([SS_0_test_normalized_neural_temp[response_test==1][i].reshape((1,-1)).repeat(N_grid, axis = 0), grid_norm]).reshape(-1)  
             start = grid_norm[np.argmax(ll_grid)]
             MLE_NCL, MLE_NCL_normalized, final_logit, _, end_state = us.numerical_optim(start, SS_0_test_normalized_neural_temp[response_test==1][i], l_bounds_NS, u_bounds_NS, classification_NN_NS, gs, params_mean=params_mean, params_std=params_std)
             mle_ncl[i] = MLE_NCL
+            if end_state:
+                converged_index.append(i)
+            else:
+                print(f"Optimization did not converge for data point {i}. Final logit: {final_logit}")
         mle_ncl_normalized = (mle_ncl - params_mean) / params_std
-        rmse_list_NCL.append(np.sqrt(mean_squared_error(params_test_pre_unnormalized[:N_test], mle_ncl)))
+        rmse_list_NCL.append(np.sqrt(mean_squared_error(params_test_pre_unnormalized[:N_test][converged_index], mle_ncl[converged_index])))
 
-        print("Training the neural network posterior...")
-        prior = BoxUniform(low=torch.tensor(l_bounds_NS_norm, dtype=torch.float32), high=torch.tensor(u_bounds_NS_norm, dtype=torch.float32))
-        inference = sbi_inference.SNLE(prior=prior)
-        density_estimator = inference.append_simulations(
-            theta=torch.tensor(params_train_nf, dtype=torch.float32),  # (N, 4)
-            x = torch.tensor(SS_nf_train, dtype=torch.float32)       # (N, 9)
-        ).train()
-        posterior = inference.build_posterior(density_estimator)
-        print("Neural network posterior trained successfully.")
 
-        print("Sampling from the normalizing flow posterior...")
-        for i, ss in enumerate(SS_nf_test[:N_test]):
-            posterior_samples_nf_normalized[i] = posterior.sample((N_posterior_samples,), x=ss).numpy()
-        posterior_samples_nf = posterior_samples_nf_normalized * params_std + params_mean
-        nf_map_normalized = np.mean(posterior_samples_nf_normalized, axis=1)
-        nf_map = nf_map_normalized * params_std + params_mean
-        rmse_list_nf.append(np.sqrt(mean_squared_error(params_test_pre_unnormalized[:N_test], nf_map)))
+        #Normalizing flow posterior------------------------------------------------
+        if run_NF:
+            print("Training the neural network posterior...")
+            prior = BoxUniform(low=torch.tensor(l_bounds_NS_norm, dtype=torch.float32), high=torch.tensor(u_bounds_NS_norm, dtype=torch.float32))
+            inference = sbi_inference.SNLE(prior=prior)
+            density_estimator = inference.append_simulations(
+                theta=params_train_nf,  # (N, 4)
+                x = SS_nf_train      # (N, 9)
+            ).train()
+            posterior = inference.build_posterior(density_estimator)
+            print("Neural network posterior trained successfully.")
 
-        #np.savez(f"neural_networks/SS_sensitivity_4/ncl_{n_rk}.npz", ncl_mle=mle_ncl, ncl_mle_normalized=mle_ncl_normalized)
-    
-    #Plot rmse vs number of RK evaluations included in summary statistics for both the sub-model and the full model
+            print("Sampling from the normalizing flow posterior...")
+            for i, ss in enumerate(SS_nf_test[:N_test]):
+                posterior_samples_nf_normalized[i] = posterior.sample((N_posterior_samples,), x=ss).numpy()
+            posterior_samples_nf = posterior_samples_nf_normalized * params_std + params_mean
+            nf_map_normalized = np.mean(posterior_samples_nf_normalized, axis=1)
+            nf_map = nf_map_normalized * params_std + params_mean
+            rmse_list_nf.append(np.sqrt(mean_squared_error(params_test_pre_unnormalized[:N_test], nf_map)))
+
+        #ABC------------------------------------------------
+        if run_abc:
+            print("\nRunning ABC ")
+            abc_samples = np.zeros((N_test, k_abc, len(l_bounds_NS)))
+            SS_pilot = None
+            theta_pilot = None
+            for i in range(N_test):
+                print("\nRunning ABC for data point", i+1, "out of", N_test)
+                #Pilot run to fit linear model
+                if i == 0:
+                    var_theta, epsilon, a_array, b_array, theta_pilot, SS_pilot = abc.abc_pilot_run(k_pilot, m, SS_obs=SS_abc_test[i], dim=dim, epsilon_percentile=epsilon_percentile,
+                                                                        l_bounds=l_bounds_NS, u_bounds=u_bounds_NS, df_metro=df_metro, T=T, cluster_bins=cluster_bins,
+                                                                        percentiles=percentiles, SS_mean=SS_mean, SS_std=SS_std, lasso_penalty=lasso_penalty,
+                                                                        SS_pilot=SS_pilot, theta_pilot=theta_pilot, return_pilot=True, SS_index_drop=dropped_RK_indexes)
+                else:
+                    var_theta, epsilon, a_array, b_array = abc.abc_pilot_run(k_pilot, m, SS_obs=SS_abc_test[i], dim=dim, epsilon_percentile=epsilon_percentile,
+                                                                        l_bounds=l_bounds_NS, u_bounds=u_bounds_NS, df_metro=df_metro, T=T, cluster_bins=cluster_bins,
+                                                                        percentiles=percentiles, SS_mean=SS_mean, SS_std=SS_std, lasso_penalty=lasso_penalty,
+                                                                        SS_pilot=SS_pilot, theta_pilot=theta_pilot, return_pilot=False, SS_index_drop=dropped_RK_indexes)
+                #Run ABC rejection sampling to obtain posterior samples
+                abc_samples[i], _ = abc.abc_rejection_sampling(k_abc, SS_abc_test[i], epsilon, m, dim, a_array, b_array, var_theta, l_bounds=l_bounds_NS, u_bounds=u_bounds_NS,
+                                                                                            df_metro=df_metro, T=T, cluster_bins=cluster_bins, percentiles=percentiles,
+                                                                                            SS_mean=SS_mean, SS_std=SS_std, max_iter = max_iter, SS_index_drop=dropped_RK_indexes)
+            rmse_list_abc.append(np.sqrt(mean_squared_error(params_test_pre_unnormalized[:N_test], np.mean(abc_samples, axis=1))))
+
+        tf.keras.backend.clear_session()
+        del sub_model_NS, sub_model_clone_NS, sub_model_clone_NS_cutted
+        #del classification_NN_NS, inference, density_estimator, posterior
+        del SS_nf_test, SS_nf_train, params_test_nf, params_train_nf
+        del SS_0_test_normalized_neural_temp, SS_0_train_normalized_neural_temp
+        #del abc_samples
 
     x_vals = RK_n - N_rk
     #save the rmse values for each model and number of RK evaluations included in summary statistics
-    np.savez("neural_networks/SS_sensitivity_4/rmse_results.npz", rmse_list_sub_model=rmse_list_sub_model, rmse_list_NCL=rmse_list_NCL, rmse_list_abc=rmse_list_abc, rmse_list_nf=rmse_list_nf, x_vals=x_vals)
+    #np.savez("neural_networks/SS_sensitivity_4/rmse_results.npz", rmse_list_sub_model=rmse_list_sub_model, rmse_list_NCL=rmse_list_NCL, rmse_list_abc=rmse_list_abc, rmse_list_nf=rmse_list_nf, x_vals=x_vals)
+    np.savez("neural_networks/SS_sensitivity_4/rmse_results_ncl.npz", rmse_list_NCL=rmse_list_NCL, x_vals=x_vals)
+    np.savez("neural_networks/SS_sensitivity_4/rmse_results_nf.npz", rmse_list_nf=rmse_list_nf, x_vals=x_vals)
 
+if __name__ == "__main__":
+    main()

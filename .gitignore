@@ -44,6 +44,7 @@ data/
 plots/
 neural_networks/
 results/
+sbi-logs/
 
 # Others
 *.bak
