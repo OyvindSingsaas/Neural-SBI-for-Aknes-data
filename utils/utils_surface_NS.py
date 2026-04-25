@@ -131,14 +131,12 @@ def covariate_formater(df_metro, metro_year, x_p, T):
         X_cov = np.zeros((x_p, T))
         df_temp = df_metro[df_metro.index.year.isin(metro_year)]
 
-        
-        #X_cov[0] = df_temp.wp.values[:T]
-        #X_cov[1] = df_temp.temperature.values[:T]
+        X_cov[0] = df_temp.wp.values[:T]
+        X_cov[1] = df_temp.temperature.values[:T]
         #X_cov[2] = df_temp.N_geophones.values[:T] #-np.log(0.01) + np.log(df_temp.N_geophones.values[:T] + 0.01) #
 
-        X_cov[0] = df_temp.doy_sin.values[:T]
+        #X_cov[0] = df_temp.doy_sin.values[:T]
         #X_cov[1] = df_temp.doy_cos.values[:T]
-
 
         return X_cov
 
@@ -200,7 +198,8 @@ def summary_statistics(X, T, cluster_bins, percentiles, df_metro, metro_year, ve
     if X.shape[0] < 2:
         return np.zeros([p +len(cluster_bins) + len(percentiles) - 1]) #!!!
     
-    log_N_events = np.log(X.shape[0])
+    N = X.shape[0] #Number of events
+    log_N_events = np.log(N)
     quantiles, mean_median = inter_event_time_histogram_percentiles(X, percentiles)
 
     #D = get_D(X)
@@ -208,7 +207,12 @@ def summary_statistics(X, T, cluster_bins, percentiles, df_metro, metro_year, ve
     #Ripleys_k = ripleys_k_beta(X, D, ripley_bins, T)
 
     #G = g_function(X, cluster_bins)
-    RK = ripley_K_1D_SS_test(X, cluster_bins, T)
+    # t_max, max_dev
+    RK = ripley_K(X, cluster_bins, T)
+
+    #Normalize RK with respesct to the expected RK for a homogeneous Poisson process with the same number of events
+    cluster_bins = np.asarray(cluster_bins)
+    RK_homogeneous = RK/(2*cluster_bins)-1
 
     #temp = df_metro.loc[metro_year].temperature.values[:365]
     #N_g = df_metro.loc[metro_year].N_geophones.values[:365]
@@ -224,8 +228,8 @@ def summary_statistics(X, T, cluster_bins, percentiles, df_metro, metro_year, ve
         cov_sum[i] = np.sum(x*N_day)/X.shape[0]
 
     #interaction = np.sum(X_cov[0]*X_cov[1]**N_day)
-
-    theta = np.concatenate([[log_N_events], quantiles, np.array([mean_median]), RK, [x for x in cov_sum]])
+    #[t_max], [max_dev],
+    theta = np.concatenate([[log_N_events], quantiles, np.array([mean_median]), RK_homogeneous,  [x for x in cov_sum]])
     
     return theta
 
@@ -336,7 +340,7 @@ def numerical_optim_sequential(events, x, x_hist, l_bounds, u_bounds, classifica
     step = 0
     grad_norm = 1
 
-    while step < 2000 and grad_norm > 10**-6:  # Number of steps
+    while step < 2000 and grad_norm > 10**-9:  # Number of steps
         step +=1
         with tf.GradientTape() as tape:
             output = classification_NN([x_fixed, x_histogram, z_variable])
@@ -344,7 +348,7 @@ def numerical_optim_sequential(events, x, x_hist, l_bounds, u_bounds, classifica
         gradients = tape.gradient(output, z_variable)
 
         optimizer.apply_gradients([(-gradients, z_variable)])
-        grad_norm = np.sum(gradients.numpy()*gradients.numpy())
+        grad_norm = np.sqrt(np.sum(gradients.numpy()*gradients.numpy()))
         if step % 100 == 0 and verbose:
             print(f"Output: {output.numpy()}, Gradient norm: {(grad_norm):.7f}")        
 
@@ -519,33 +523,18 @@ def negative_log_likelihood(params, X, Y):
 #---------------------------------------------------
 
 
-def ripley_K_1D(events, max_dist, n_eval=100):
+def ripley_K(events, evals, T):
+    events = np.sort(events)
     n = len(events)
-    T = events[-1] - events[0]
-    dists = np.abs(events[:, None] - events)
-    np.fill_diagonal(dists, np.inf)
-
-    t_vals = np.linspace(0, max_dist, n_eval)
-    K_vals = []
-    for t in t_vals:
-        K_t = (np.sum(dists <= t)) / (n * (n - 1) / T)
-        K_vals.append(K_t)
-    return t_vals, np.array(K_vals)
-
-
-@jit(nopython=True)
-def ripley_K_1D_SS(events, evals, T):
-    n = len(events)
-    dists = np.abs(events[:, None] - events)
-    np.fill_diagonal(dists, np.inf)
-
-    K_vals = []
-    for t in evals:
-        K_t = (np.sum(dists <= t)) / (n * (n - 1) / T)
-        K_vals.append(K_t)
-    return np.array(K_vals)
-
-import numpy as np
+    K_vals = np.zeros(len(evals))
+    
+    for idx, r in enumerate(evals):
+        left = np.searchsorted(events, events - r, side='left')
+        right = np.searchsorted(events, events + r, side='right')
+        counts = right - left - 1
+        K_vals[idx] = T * np.sum(counts) / (n * (n - 1))
+        
+    return K_vals
 
 def ripley_K_1D_SS_test(events, evals, T):
 
@@ -557,9 +546,17 @@ def ripley_K_1D_SS_test(events, evals, T):
         # for each event, count how many events are within distance t ahead
         j = np.searchsorted(events, events + t, side='right')
         counts = j - np.arange(n) - 1  # subtract self
-        K_vals[idx] = np.sum(counts) / (n * (n - 1) / T)
-    
+        K_vals[idx] = np.sum(counts) / (n * (n - 1))
+    """
+    K_poisson = 2 * np.array(evals)
+    deviations = np.abs(K_vals - K_poisson)
+    max_idx = np.argmax(deviations)
+    t_max = evals[max_idx]
+    max_dev = deviations[max_idx]
+    return K_vals, t_max, max_dev
+    """
     return K_vals
+
 
 
 def poisson_envelope(events, max_dist, n_sim=100, n_eval=100):
@@ -643,3 +640,54 @@ def get_neg_hessian(theta_MLE, x_fixed, gs, p, classification_NN):
 
     #print("Hessian: \n", hessian.numpy())
     return hessian, grad.numpy()[0]
+
+
+
+
+
+
+import numpy as np
+from matplotlib.patches import Ellipse
+from scipy.stats import chi2
+
+def plot_gaussian_ellipse(mean, cov=None, precision=None, p=0.95, ax=None, **kwargs):
+    """
+    Plot the contour ellipse of a 2D Gaussian on a given Matplotlib axis.
+
+    Parameters
+    ----------
+    mean : array-like of shape (2,)
+        Mean of the Gaussian (x, y).
+    cov : array-like of shape (2, 2), optional
+        Covariance matrix.
+    precision : array-like of shape (2, 2), optional
+        Precision matrix (inverse covariance). One of `cov` or `precision` must be given.
+    p : float, default=0.95
+        Probability level for the ellipse (e.g. 0.95 for a 95% contour).
+    ax : matplotlib.axes.Axes, optional
+        Axis to plot on. If None, uses current axis.
+    **kwargs :
+        Passed to `matplotlib.patches.Ellipse` (e.g., edgecolor, lw, linestyle).
+    """
+    if (cov is None) == (precision is None):
+        raise ValueError("Provide exactly one of `cov` or `precision`.")
+
+    cov = np.asarray(cov if cov is not None else np.linalg.inv(precision))
+    mean = np.asarray(mean)
+
+    # Eigen-decomposition
+    vals, vecs = np.linalg.eigh(cov)
+    order = vals.argsort()[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+
+    # Confidence scaling factor
+    k = np.sqrt(chi2.ppf(p, 2))
+    width, height = 2 * k * np.sqrt(vals)
+    angle = np.degrees(np.arctan2(*vecs[:,0][::-1]))
+
+    ell = Ellipse(xy=mean, width=width, height=height, angle=angle,
+                  facecolor='none', **kwargs)
+
+    ax = ax or plt.gca()
+    ax.add_patch(ell)
+    return ell

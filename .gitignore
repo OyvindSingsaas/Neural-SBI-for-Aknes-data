@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+*.pyd
+*.pdb
+*.log
+*.pot
+*.mo
+*.sqlite3
+*.db
+*.ipynb_checkpoints/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+.venv
+venv/
+ENV/
+
+# Data
+*.h5
+*.hdf5
+*.csv
+*.tsv
+*.dat
+*.npz
+*.npy
+data/
+plots/
+neural_networks/
+results/
+sbi-logs/
+
+# Others
+*.bak
+*.swp
+*.tmp
+*.orig
+
+# Ignore requirements lock files
+poetry.lock
+Pipfile.lock
+
+# Ignore notebook output
+**/.ipynb_checkpoints/
+
+# Ignore test outputs
+htmlcov/
+.coverage
+.tox/
+
+# Ignore local config
+*.local
