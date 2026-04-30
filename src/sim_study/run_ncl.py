@@ -99,7 +99,7 @@ def godambe_G_NS(N_G, theta_0, params_mean, params_std, gs, year, p, T, cluster_
 
 
 print("Loading data...")
-data = np.load('data/NS_data_temp_wp_10RK.npz', allow_pickle=True)
+data = np.load('data/NS_data_temp_wp_10RK_small.npz', allow_pickle=True)
 params_train_normalized = data['params_train_normalized']
 SS_0_train_normalized_neural = data['SS_0_train_normalized_neural']
 response_train = data['response_train']
@@ -132,7 +132,7 @@ true_normalized = params_test_normalized[response_test == 1][:N_train,:]
 true = true_normalized * params_std + params_mean
 
 print("\nLoading trained neural network for NCL...")
-classification_NN_NS = load_model("neural_networks/classification_NN_NS.h5", compile=False)
+classification_NN_NS = load_model("neural_networks/classification_NN_NS_small.h5", compile=False)
 print("Model loaded successfully.")
 print("\nPredicting parameters using the neural network model...")
 N_grid = 1000
@@ -177,4 +177,4 @@ ncl_mle_normalized = (ncl_mle - params_mean) / params_std
 G_inv_NS_ray = np.array(G_inv_NS_ray)
 H_neg_NS_ray = np.array(H_neg_NS_ray)
 print("\nSaving the NCL MLE estimates...")
-np.savez("results/sim_study/ncl.npz", ncl_mle=ncl_mle, ncl_mle_normalized=ncl_mle_normalized, N_train=N_train, true=true, true_normalized=true_normalized, G_inv_NS_ray=G_inv_NS_ray, H_neg_NS_ray=H_neg_NS_ray, not_converged_index=not_converged_index)
+np.savez("results/sim_study/ncl_small.npz", ncl_mle=ncl_mle, ncl_mle_normalized=ncl_mle_normalized, N_train=N_train, true=true, true_normalized=true_normalized, G_inv_NS_ray=G_inv_NS_ray, H_neg_NS_ray=H_neg_NS_ray, not_converged_index=not_converged_index)

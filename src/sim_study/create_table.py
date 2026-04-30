@@ -5,7 +5,7 @@ def format_row(method, metric, values, extra=None):
 	row = f"{method} & {metric} "
 	for v in values:
 		if isinstance(v, float):
-			row += f"& {v:.3f} "
+			row += f"& {v:.2f} "
 		else:
 			row += f"& {v} "
 	if extra:
@@ -13,8 +13,16 @@ def format_row(method, metric, values, extra=None):
 	row += r"\\"
 	return row
 
+#Small dataset paths
+load_path = "results/sim_study/performance_stats_abc_test.json"
+save_table_path = "results/sim_study/performance_table_abc_bank.tex"
+
+#Large dataset paths
+#load_path = "results/sim_study/performance_stats_large.json"
+#save_table_path = "results/sim_study/performance_table_large.tex"
+
 def main():
-	stats = json.load(open("results/sim_study/performance_stats.json", "r"))
+	stats = json.load(open(load_path, "r"))
 	nf = stats['nf_stats']
 	ncl = stats['ncl_stats']
 	abc = stats['abc_stats']
@@ -32,6 +40,10 @@ def main():
 	abc_cov = stats['abc_coverage']
 	abc_ci = stats['abc_interval_lengths_mean']
 
+	idea = stats['idea_stats']
+	idea_cov = stats['idea_coverage']
+	idea_ci = stats['idea_interval_lengths_mean']
+
 	# Parameter names (edit as needed)
 	param_names = [r"$\ln(\delta)$", r"$\ln(\sigma^2)$", r"$\beta_{0}$", r"$\beta_{1}$", r"$\beta_{2}$"]
 
@@ -44,7 +56,7 @@ def main():
 
 	# NCL, Uncalibrated
 	lines.append(format_row("NCL,", "Bias", ncl['bias']))
-	mse_with_se_ncl = [f"{mse:.3f} ({se:.3f})" for mse, se in zip(ncl['rmse_paramwise'], ncl['rmse_paramwise_error'])]
+	mse_with_se_ncl = [f"{mse:.2f} ({se:.2f})" for mse, se in zip(ncl['rmse_paramwise'], ncl['rmse_paramwise_error'])]
 	lines.append(format_row("Uncal.", "RMSE", mse_with_se_ncl))
 	lines.append(format_row("", "Coverage", ncl_cov))
 	lines.append(format_row("", "CI Len.", ncl_ci))
@@ -62,7 +74,7 @@ def main():
 
 	# NF
 	lines.append(format_row("NF", "Bias", nf['bias']))
-	mse_with_se = [f"{mse:.3f} ({se:.3f})" for mse, se in zip(nf['rmse_paramwise'], nf['rmse_paramwise_error'])]
+	mse_with_se = [f"{mse:.2f} ({se:.2f})" for mse, se in zip(nf['rmse_paramwise'], nf['rmse_paramwise_error'])]
 	lines.append(format_row("", "RMSE", mse_with_se))
 	lines.append(format_row("", "Coverage", nf_cov))
 	lines.append(format_row("", "CI Len.", nf_ci))
@@ -70,15 +82,25 @@ def main():
 
 	# ABC
 	lines.append(format_row("ABC", "Bias", abc['bias']))
-	mse_with_se_abc = [f"{mse:.3f} ({se:.3f})" for mse, se in zip(abc['rmse_paramwise'], abc['rmse_paramwise_error'])]
+	mse_with_se_abc = [f"{mse:.2f} ({se:.2f})" for mse, se in zip(abc['rmse_paramwise'], abc['rmse_paramwise_error'])]
 	lines.append(format_row("", "RMSE", mse_with_se_abc))
 	lines.append(format_row("", "Coverage", abc_cov))
 	lines.append(format_row("", "CI Len.", abc_ci))
 	lines.append(r"\hline")
+
+	ncl_idea = True
+	if ncl_idea:
+		# NCL Idea
+		lines.append(format_row("NCL", "Bias", idea['bias']))
+		mse_with_se_idea = [f"{mse:.2f} ({se:.2f})" for mse, se in zip(idea['rmse_paramwise'], idea['rmse_paramwise_error'])]
+		lines.append(format_row("Idea", "RMSE", mse_with_se_idea))
+		lines.append(format_row("", "Coverage", idea_cov))
+		lines.append(format_row("", "CI Len.", idea_ci))
+		lines.append(r"\hline")
 	lines.append(r"\end{tabular}")
 
 	# Write to file
-	with open("results/sim_study/performance_table.tex", "w") as f:
+	with open(save_table_path, "w") as f:
 		for line in lines:
 			f.write(line + "\n")
 

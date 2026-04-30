@@ -30,7 +30,7 @@ from sklearn.cross_decomposition import PLSRegression
 def main():
     # Load the data
     print("Loading data...")
-    data = np.load('data/NS_data_temp_wp_10RK.npz', allow_pickle=True)
+    data = np.load('data/NS_data_temp_wp_10RK_small.npz', allow_pickle=True)
     params_train_normalized = data['params_train_normalized']
     SS_0_train_normalized_neural = data['SS_0_train_normalized_neural']
     response_train = data['response_train']
@@ -226,7 +226,7 @@ def main():
     plt.close()
 
     #save full model
-    classification_NN_NS.save("neural_networks/classification_NN_NS.h5")
+    classification_NN_NS.save("neural_networks/classification_NN_NS_small.h5")
 
     np.random.seed(42)
     n_samples = response_test_pred_probs.shape[0]
@@ -238,7 +238,7 @@ def main():
     model_calibration.fit(X_platt, response_test) 
     platt_scaler = model_calibration.coef_[0][0]
     #save the Platt scaling factor
-    np.save("neural_networks/platt_scaler_NS.npy", platt_scaler)
+    np.save("neural_networks/platt_scaler_NS_small.npy", platt_scaler)
     print(f"Model Coefficients: β0 = {model_calibration.intercept_[0]:.4f}, β1 = {model_calibration.coef_[0][0]:.4f}")
 
 main()

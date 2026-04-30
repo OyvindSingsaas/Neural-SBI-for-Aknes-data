@@ -7,8 +7,9 @@ import time
 from tensorflow.keras.models import load_model
 from scipy.stats import norm
 import tensorflow as tf
-
-
+import keras
+import src.ncl.ncl_idea_utils as ncl_utils
+import os
 from scipy.stats import gaussian_kde
 
 col_names_params_NS = [
@@ -93,7 +94,10 @@ def godambe_G_NS(N_G, theta_0, params_mean, params_std, gs, year, p, T, cluster_
 
 
 
-def plot_example(NF_samples, abc_samples, MLE_NCL_0_NS, G_inv_NS, H_neg_NS, platt_scaler, theta_0_NS, col_names_params_NS, params_mean, params_std, l_bounds_NS, u_bounds_NS):
+def plot_example(NF_samples, abc_samples, MLE_NCL_0_NS, G_inv_NS, H_neg_NS,
+                  platt_scaler, theta_0_NS, col_names_params_NS,
+                    params_mean, params_std, l_bounds_NS, u_bounds_NS,
+                    mle_ncl_idea = None, fisher_info_ncl_idea = None, plot_idea = False):
     plt.rcParams.update({
         "font.size": 16,        # default text
         "axes.titlesize": 18,   # title
@@ -188,13 +192,26 @@ def plot_example(NF_samples, abc_samples, MLE_NCL_0_NS, G_inv_NS, H_neg_NS, plat
         ax.fill_between(dim_vary, pdf, y2=ymin, where=inside, color='purple', alpha=shade)
 
 
-        #ax.set_xlim(np.min([mu - np.max([std, std_Platt, std_G])*3, dim_vary[mask_abc][0]-0.1 ]), np.max([mu + np.max([std, std_Platt, std_G])*3, dim_vary[mask_abc][-1] +0.1]))
-        ax.set_xlim([mu - np.max([std, std_Platt, std_G])*4, mu + np.max([std, std_Platt, std_G])*4])
-        #ax.set_xlim((l_bounds_NS[dim], u_bounds_NS[dim]))
+        if mle_ncl_idea is not None and fisher_info_ncl_idea is not None and plot_idea:
+            print(dim_vary.shape)
+            std_idea = np.sqrt(np.linalg.inv(fisher_info_ncl_idea)[dim][dim])*params_std[dim]
+            pdf_idea = norm.pdf(dim_vary, loc = mle_ncl_idea[dim], scale = std_idea)
+            ax.plot(dim_vary, pdf_idea, label="NCL idea", color="cyan")
+            lower, upper = mle_ncl_idea[dim] - z*std_idea, mle_ncl_idea[dim] + z*std_idea
+            inside_idea = (dim_vary >= lower) & (dim_vary <= upper)
+            ax.fill_between(dim_vary, pdf_idea, y2=ymin, where=inside_idea, color='cyan', alpha=shade)
+
+        ncl_lower = mu - z * np.max([std, std_Platt, std_G])
+        ncl_upper = mu + z * np.max([std, std_Platt, std_G])
+        xmin = min(ncl_lower, low, low_abc)
+        xmax = max(ncl_upper, high, high_abc)
+        margin = (xmax - xmin) * 0.05
+        ax.set_xlim(xmin - margin, xmax + margin)
         ax.set_ylim((ymin, ymax*1.1))
-        ax.vlines(x=theta_0_NS[dim], ymax=ymax*1.1, ymin=ymin, linestyles="--", color="red", label="True")            
+        ax.vlines(x=theta_0_NS[dim], ymax=ymax*1.1, ymin=ymin, linestyles="--", color="red", label="True")
         ax.set_yticks([])
-        handles, labels = ax.get_legend_handles_labels()
+
+    handles, labels = axs[0].get_legend_handles_labels()
 
     ax = axs[-1]
     #Remove the last subplot (empty)
@@ -293,10 +310,25 @@ def main():
     ABC_samples = np.load("results/NS_ABC_example.npz", allow_pickle=True)
     posterior_samples_theta = ABC_samples["posterior_samples_theta"]
     posterior_SS = ABC_samples["posterior_samples_SS"]
-    print("Mean number of events in ABC simulated data:", np.mean(np.exp(posterior_SS[:,0]*SS_std[0] + SS_mean[0])))
+    print("Mean number of events in ABC simulated data:", np.mean(np.exp(posterior_SS[:,0])))
+
+
+    # NCL idea
+    print("\nLoading trained models...")
+    model = keras.models.load_model("neural_networks/idea_network/model.keras")
+    F_point = keras.models.load_model("neural_networks/idea_network/F_point.keras")
+    delta_net_path = "neural_networks/idea_network/delta_net.keras"
+    delta_net = keras.models.load_model(delta_net_path) if os.path.exists(delta_net_path) else None
+    curvature_head = model.get_layer("curvature_head")
+    print("Models loaded.")
+
+    mle_ncl_idea_normalized = ncl_utils.mle(S_obs=SS_obs_normalized.reshape((1,-1)), F_point=F_point, delta_net=delta_net).numpy()[0]  # squeeze batch dim
+    mle_ncl_idea = mle_ncl_idea_normalized * params_std + params_mean  # denormalize to original space
+    fisher_info_ncl_idea = ncl_utils.fisher_information(curvature_head=curvature_head, S_obs=SS_obs_normalized.reshape((1,-1)), p=p).numpy()[0]  # squeeze batch dim, shape (p, p)
+
 
     plt.figure()
-    plt.hist(np.exp(posterior_SS[:,0]*SS_std[0] + SS_mean[0]), bins=30, density=True)
+    plt.hist(np.exp(posterior_SS[:,0]), bins=30, density=True)
     plt.title("Distribution of number of events in ABC simulated data")
     plt.xlabel("Number of events")
     plt.ylabel("Density")
@@ -309,6 +341,11 @@ def main():
  
     #Plot 
     print("\nPlotting the results...")
-    plot_example(NF_samples, posterior_samples_theta, MLE_NCL, G_inv_NS, H_neg_NS, platt_scaler = platt_scaler, theta_0_NS = theta_true, col_names_params_NS = col_names_params_NS, params_mean = params_mean, params_std = params_std, l_bounds_NS = l_bounds_NS, u_bounds_NS = u_bounds_NS)
+    plot_example(NF_samples, posterior_samples_theta, MLE_NCL,
+                  G_inv_NS, H_neg_NS, platt_scaler = platt_scaler,
+                    theta_0_NS = theta_true, col_names_params_NS = col_names_params_NS,
+                      params_mean = params_mean, params_std = params_std,
+                        l_bounds_NS = l_bounds_NS, u_bounds_NS = u_bounds_NS,
+                        mle_ncl_idea = mle_ncl_idea, fisher_info_ncl_idea = fisher_info_ncl_idea)
 
 main()

@@ -67,7 +67,7 @@ N_train = 100
 true_normalized = params_test_normalized[response_test == 1][:N_train,:]
 true = true_normalized * params_std + params_mean
 year = [2023]
-load_results = False
+load_results = True
 #######################
 #NF
 if not load_results:

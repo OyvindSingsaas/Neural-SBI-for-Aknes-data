@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import invgamma
 import utils.utils_surface_NS as us
-from sklearn.linear_model import Lasso
+from sklearn.linear_model import Lasso, LinearRegression
 
 
 
@@ -79,8 +79,7 @@ def abc_distance(SS, SS_obs, a, b, var_theta):
     return distance
 
 def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds,
-                   df_metro, T, cluster_bins, percentiles, SS_mean,
-                     SS_std, epsilon_percentile = 1, lasso_penalty = 0.01,
+                   df_metro, T, cluster_bins, percentiles, epsilon_percentile = 1, lasso_penalty = 0.01,
                      theta_pilot = None, SS_pilot = None, return_pilot = False, SS_index_drop = None):
     """
     Perform a pilot run for ABC to estimate the empirical variance of the parameter vectors.
@@ -107,7 +106,7 @@ def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds,
                 theta = abc_prior(1, l_bounds=l_bounds, u_bounds=u_bounds) #sample theta from the prior distribution
                 x, y, metro_year = sample_data(theta, df_metro, T, 1) #sample data from the model using theta
                 SS = compute_summary_statistics(x[0], T, cluster_bins, percentiles, df_metro, metro_year[0], dim) #compute summary statistics for the simulated data
-                SS = (SS - SS_mean)/SS_std
+                #SS = (SS - SS_mean)/SS_std
 
                 n = len(x[0]) #number of points in simulated data
             theta_pilot[k] = theta  # Store the accepted parameter vector
@@ -125,10 +124,20 @@ def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds,
     a_array = np.zeros(dim)
     b_array = np.zeros((dim, len(SS_obs)))
     for d in range(dim):
-        lasso = Lasso(alpha=lasso_penalty)  # Adjust alpha as needed
+        # Step 1: Lasso for variable selection
+        lasso = Lasso(alpha=lasso_penalty)
         lasso.fit(X, Y[:, d])
-        a_array[d] = lasso.intercept_
-        b_array[d] = lasso.coef_
+        selected = np.where(lasso.coef_ != 0)[0]
+
+        if len(selected) == 0:
+            # No variables selected — intercept-only model
+            a_array[d] = np.mean(Y[:, d])
+        else:
+            # Step 2: OLS refit on selected variables to remove shrinkage bias
+            ols = LinearRegression()
+            ols.fit(X[:, selected], Y[:, d])
+            a_array[d] = ols.intercept_
+            b_array[d, selected] = ols.coef_
 
     """
     # Center summary statistics
@@ -146,6 +155,8 @@ def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds,
     theta_pilot_hat = a_array[np.newaxis, :] + X @ b_array.T
     # Compute empirical variance of the fitted parameter vectors from the pilot run
     var_theta = np.var(theta_pilot_hat, axis=0)
+    var_theta = np.maximum(var_theta, 1e-10)
+
     # Compute the tolerance level based on the specified percentile
     epsilon = np.percentile([abc_distance(SS_pilot[i], SS_obs, a_array, b_array, var_theta) for i in range(k_pilot)], epsilon_percentile)
     if return_pilot:
@@ -153,7 +164,7 @@ def abc_pilot_run(k_pilot, m, SS_obs, dim, l_bounds, u_bounds,
     else:
         return var_theta, epsilon, a_array, b_array
 
-def abc_rejection_sampling(k_abc, SS_obs, epsilon, m, dim, a_array, b_array, var_theta, l_bounds, u_bounds, df_metro, T, cluster_bins, percentiles, SS_mean, SS_std, max_iter = 1000, SS_index_drop = None):
+def abc_rejection_sampling(k_abc, SS_obs, epsilon, m, dim, a_array, b_array, var_theta, l_bounds, u_bounds, df_metro, T, cluster_bins, percentiles, max_iter = 1000, SS_index_drop = None):
     """
     Perform ABC rejection sampling to obtain parameter vectors that are close to the observed summary statistics.
     Parameters:
@@ -193,7 +204,7 @@ def abc_rejection_sampling(k_abc, SS_obs, epsilon, m, dim, a_array, b_array, var
                 theta = abc_prior(1, l_bounds=l_bounds, u_bounds=u_bounds) #sample theta from the prior distribution
                 x, y, metro_year = sample_data(theta, df_metro, T, n = 1) #sample data from the model using theta
                 SS = compute_summary_statistics(x[0], T, cluster_bins, percentiles, df_metro, metro_year[0], dim) #compute summary statistics for the simulated data
-                SS = (SS - SS_mean)/SS_std
+                #SS = (SS - SS_mean)/SS_std
                 if SS_index_drop is not None:
                     SS = np.delete(SS, SS_index_drop) 
         

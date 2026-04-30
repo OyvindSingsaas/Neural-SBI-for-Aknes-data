@@ -8,6 +8,37 @@ from tensorflow.keras.models import load_model
 import utils.utils_surface_NS as us
 from scipy.stats import norm
 
+
+
+
+#Paths
+small = False
+if small:
+    #Small dataset paths
+    data_path = 'data/NS_data_temp_wp_10RK_small.npz'
+    nf_results_path = "results/sim_study/nf_small.npz"
+    ncl_results_path = "results/sim_study/ncl_small.npz"
+    platt_scaler_path = "neural_networks/platt_scaler_NS_small_new.npy"
+    abc_results_path = "results/sim_study/abc_samples_small.npz"
+    idea_ncl_results_path = "results/sim_study/idea_ncl_small.npz"
+    save_scatter_path = "results/sim_study/scatterplot_small.png"
+    save_performance_stats_path = "results/sim_study/performance_stats_small.json"
+else:
+    #Large dataset paths 
+    data_path = 'data/NS_data_temp_wp_10RK.npz'
+    nf_results_path = "results/sim_study/nf.npz"
+    ncl_results_path = "results/sim_study/ncl.npz"
+    platt_scaler_path = "neural_networks/platt_scaler_NS.npy"
+    abc_results_path = "results/sim_study/abc_samples_bank.npz"
+    idea_ncl_results_path = "results/sim_study/idea_ncl.npz"
+    save_scatter_path = "results/sim_study/scatterplot.png"
+    save_performance_stats_path = "results/sim_study/performance_stats.json"
+
+test = True
+if test:
+    save_scatter_path = "results/sim_study/scatterplot_abc_test.png"
+    save_performance_stats_path = "results/sim_study/performance_stats_abc_test.json"
+
 col_names_params_NS = [
     r"$\log(\delta)$",
     r"$\log(\sigma^2)$",
@@ -55,7 +86,7 @@ def compute_performance_stats(true_normalized, pred_normalized, params_std, para
     }
 
 print("Loading data...")
-data = np.load('data/NS_data_temp_wp_10RK.npz', allow_pickle=True)
+data = np.load(data_path, allow_pickle=True)
 params_train_normalized = data['params_train_normalized']
 SS_0_train_normalized_neural = data['SS_0_train_normalized_neural']
 response_train = data['response_train']
@@ -89,7 +120,7 @@ print("Number of training data points:", len(params_train_normalized))
 alpha = 10
 
 print("\nLoading normalizing flow results...")
-nf_results = np.load("results/sim_study/nf_current.npz", allow_pickle=True)
+nf_results = np.load(nf_results_path, allow_pickle=True)
 posterior_samples = nf_results["posterior_samples"]
 posterior_samples_normalized = nf_results["posterior_samples_normalized"]
 nf_map = nf_results["nf_map"]
@@ -119,7 +150,7 @@ print("Empirical coverage for Normalizing Flow (alpha={}):".format(alpha), nf_co
 print("Average interval lengths for Normalizing Flow (alpha={}):".format(alpha), nf_interval_lengths_mean, "±", nf_interval_lengths_std)
 
 print("\nLoading NCL results...")
-ncl_results = np.load("results/sim_study/ncl_current.npz", allow_pickle=True)
+ncl_results = np.load(ncl_results_path, allow_pickle=True)
 ncl_mle = ncl_results["ncl_mle"]
 ncl_mle_normalized = ncl_results["ncl_mle_normalized"]
 N_train_ncl = ncl_results["N_train"]
@@ -133,7 +164,7 @@ print("Number of non-converged optimizations:", len(not_converged_index), "at in
 N_train_ncl_converged = N_train_ncl - len(not_converged_index)
 
 #Load platt scaling factor for NCL confidence intervals
-platt_scaler = np.load("neural_networks/platt_scaler_NS.npy", allow_pickle=True)
+platt_scaler = np.load(platt_scaler_path, allow_pickle=True)
 print("Platt scaling factor for NCL confidence intervals loaded successfully:", platt_scaler)
 
 print("\nComputing empirical coverage and confidence intervals for NCL...")
@@ -198,7 +229,7 @@ print("Empirical coverage for NCL (Hessian-based, alpha={}):".format(alpha), ncl
 print("Average interval lengths for NCL (Hessian-based, alpha={}):".format(alpha), ncl_interval_lengths_mean, "±", ncl_interval_lengths_std)
 
 #Load ABC results
-abc_results = np.load("results/sim_study/abc_samples.npz", allow_pickle=True)
+abc_results = np.load(abc_results_path, allow_pickle=True)
 abc_samples = abc_results["abc_samples"]
 abc_samples_normalized = abc_results["abc_samples_normalized"]
 abc_map = abc_results["abc_map"]
@@ -222,6 +253,47 @@ abc_interval_lengths_mean = np.mean(abc_interval_lengths, axis=0)
 abc_interval_lengths_std = np.std(abc_interval_lengths, axis=0)
 print("Empirical coverage for ABC (alpha={}):".format(alpha), abc_coverage)
 print("Average interval lengths for ABC (alpha={}):".format(alpha), abc_interval_lengths_mean, "±", abc_interval_lengths_std)   
+
+#ncl new idea
+print("\nLoading new idea for NCL results...")
+idea_ncl_results = np.load(idea_ncl_results_path, allow_pickle=True)
+idea_mle = idea_ncl_results["idea_mle"]
+idea_mle_normalized = idea_ncl_results["idea_mle_normalized"]
+cov_ray = idea_ncl_results["cov_ray"]
+N_train_idea = idea_ncl_results["N_train"]
+true_idea = idea_ncl_results["true"]
+true_idea_normalized = idea_ncl_results["true_normalized"]
+print("Idea NCL results loaded successfully.")
+
+#Empirical parameter-wise coverage and interval lengths for new idea for NCL
+print("\nComputing empirical coverage and confidence intervals for Idea NCL...")
+idea_coverage = np.zeros((len(l_bounds_NS),))
+idea_interval_lengths = np.zeros((N_train_idea, len(l_bounds_NS)))
+
+z = norm.ppf(1 - alpha / 200)  # z-score for two-tailed test
+for n in range(N_train_idea):
+    for param in range(len(l_bounds_NS)):
+        std = np.sqrt(cov_ray[n, param, param])
+        lower = idea_mle_normalized[n, param] - z * std
+        upper = idea_mle_normalized[n, param] + z * std
+        lower_denorm = lower * params_std[param] + params_mean[param]
+        upper_denorm = upper * params_std[param] + params_mean[param]
+        coverage = (true_idea_normalized[n, param] >= lower) and (true_idea_normalized[n, param] <= upper)
+        idea_coverage[param] += coverage
+        idea_interval_lengths[n, param] = upper_denorm - lower_denorm
+idea_coverage /= N_train_idea
+idea_interval_lengths_mean = np.mean(idea_interval_lengths, axis=0)
+idea_interval_lengths_std = np.std(idea_interval_lengths, axis=0)
+print("Empirical coverage for Idea NCL (alpha={}):".format(alpha), idea_coverage)
+print("Average interval lengths for Idea NCL (alpha={}):".format(alpha), idea_interval_lengths_mean, "±", idea_interval_lengths_std)
+
+#Compute performance statistics for new idea for NCL
+idea_stats = compute_performance_stats(
+    true_idea_normalized,
+    idea_mle_normalized,
+    params_std,
+    params_mean
+)
 
 #Compute performance statistics for ABC
 print("\nComputing performance statistics for ABC...")
@@ -252,16 +324,16 @@ fig, axs = plt.subplots(2, 3, figsize=(12, 7))
 axs = axs.ravel()
 for i in range(num_params):
     ax = axs[i]
-    ax.scatter(true_nf[:, i], nf_map[:, i], label="NF MAP", alpha=0.5)
+    ax.scatter(true_nf[:, i], nf_map[:, i], label="NF MAP", alpha=0.2)
     #Dont plot non-converged points for NCL
-    ax.scatter(true_ncl[converged_ncl, i], ncl_mle[converged_ncl, i], label="NCL MLE", alpha=0.5)
-    ax.scatter(true_abc[:, i], abc_map[:, i], label="ABC MAP", alpha=0.5)
+    ax.scatter(true_ncl[converged_ncl, i], ncl_mle[converged_ncl, i], label="NCL MLE", alpha=0.2)
+    ax.scatter(true_abc[:, i], abc_map[:, i], label="ABC MAP", alpha=0.2)
+    ax.scatter(true_idea[:, i], idea_mle[:, i], label="Idea NCL MLE", alpha=0.2)
     ax.set_title(col_names_params_NS[i])
-    axis_max = max(ax.get_ylim()[1], ax.get_xlim()[1])
-    axis_min = min(ax.get_ylim()[0], ax.get_xlim()[0])
-    ax.set_xlim([axis_min, axis_max])
-    ax.set_ylim([axis_min, axis_max])
-    ax.plot([axis_min, axis_max], [axis_min, axis_max], 'k--', alpha=0.7)
+
+    ax.set_xlim([l_bounds_NS_test[i], u_bounds_NS_test[i]])
+    ax.set_ylim([l_bounds_NS[i], u_bounds_NS[i]])
+    ax.plot([l_bounds_NS_test[i], u_bounds_NS_test[i]], [l_bounds_NS_test[i], u_bounds_NS_test[i]], 'k--', alpha=0.7)
     if i % 3 == 0:
         ax.set_ylabel("Predicted"
                       )
@@ -279,12 +351,12 @@ fig.legend(keys, labels, ncol=1, bbox_to_anchor=(0.83, 0.48))
 for j in range(num_params, 6):
     fig.delaxes(axs[j])
 fig.tight_layout()
-fig.savefig("results/sim_study/scatterplot.png")
+fig.savefig(save_scatter_path)
 plt.close(fig)
 
 #Save performance statistics to json file for both methods and coverage and interval lengths
 print("\nSaving performance statistics to json file...")
-with open("results/sim_study/performance_stats.json", "w") as f:
+with open(save_performance_stats_path, "w") as f:
     json.dump({
         "nf_stats": nf_stats,
         "ncl_stats": ncl_stats,
@@ -304,6 +376,10 @@ with open("results/sim_study/performance_stats.json", "w") as f:
         "abc_coverage": abc_coverage.tolist(),
         "abc_interval_lengths_mean": abc_interval_lengths_mean.tolist(),
         "abc_interval_lengths_std": abc_interval_lengths_std.tolist(),
+        "idea_coverage": idea_coverage.tolist(),
+        "idea_interval_lengths_mean": idea_interval_lengths_mean.tolist(),
+        "idea_interval_lengths_std": idea_interval_lengths_std.tolist(),
+        "idea_stats": idea_stats,
     }, f, indent=4)
 
 event_count = SS_0_test_normalized_neural[response_test==1]
@@ -312,23 +388,23 @@ event_count = event_count[:N_train_nf]
 event_count = np.exp(event_count)  # Inverse of log1p to get back to original scale
 #plot mse vs event count for all methods
 
-plt.figure(figsize=(8, 6))
-plt.scatter(event_count, np.sqrt(np.mean((true_nf - nf_map)**2, axis=1)), label="NF", alpha=0.5)
-plt.scatter(event_count[converged_ncl], np.sqrt(np.mean((true_ncl[converged_ncl] - ncl_mle[converged_ncl])**2, axis=1)), label="NCL", alpha=0.5)
-plt.scatter(event_count, np.sqrt(np.mean((true_abc - abc_map)**2, axis=1)), label="ABC", alpha=0.5)
-#add regression line for each method
-z_nf = np.polyfit(event_count, np.sqrt(np.mean((true_nf - nf_map)**2, axis=1)), 1)
-p_nf = np.poly1d(z_nf)
-plt.plot(event_count, p_nf(event_count), "r--", label="NF regression", alpha=0.7)
-z_ncl = np.polyfit(event_count[converged_ncl], np.sqrt(np.mean((true_ncl[converged_ncl] - ncl_mle[converged_ncl])**2, axis=1)), 1)
-p_ncl = np.poly1d(z_ncl)
-plt.plot(event_count[converged_ncl], p_ncl(event_count[converged_ncl]), "b--", label="NCL regression", alpha=0.7)
-z_abc = np.polyfit(event_count, np.sqrt(np.mean((true_abc - abc_map)**2, axis=1)), 1)
-p_abc = np.poly1d(z_abc)
-plt.plot(event_count, p_abc(event_count), "g--", label="ABC regression", alpha=0.7)
-plt.xlabel("Event count")
-plt.ylabel("RMSE")
-plt.legend()
-plt.tight_layout()
-plt.savefig("results/sim_study/rmse_vs_event_count.png")
-plt.close()
+# plt.figure(figsize=(8, 6))
+# plt.scatter(event_count, np.sqrt(np.mean((true_nf - nf_map)**2, axis=1)), label="NF", alpha=0.5)
+# plt.scatter(event_count[converged_ncl], np.sqrt(np.mean((true_ncl[converged_ncl] - ncl_mle[converged_ncl])**2, axis=1)), label="NCL", alpha=0.5)
+# plt.scatter(event_count, np.sqrt(np.mean((true_abc - abc_map)**2, axis=1)), label="ABC", alpha=0.5)
+# #add regression line for each method
+# z_nf = np.polyfit(event_count, np.sqrt(np.mean((true_nf - nf_map)**2, axis=1)), 1)
+# p_nf = np.poly1d(z_nf)
+# plt.plot(event_count, p_nf(event_count), "r--", label="NF regression", alpha=0.7)
+# z_ncl = np.polyfit(event_count[converged_ncl], np.sqrt(np.mean((true_ncl[converged_ncl] - ncl_mle[converged_ncl])**2, axis=1)), 1)
+# p_ncl = np.poly1d(z_ncl)
+# plt.plot(event_count[converged_ncl], p_ncl(event_count[converged_ncl]), "b--", label="NCL regression", alpha=0.7)
+# z_abc = np.polyfit(event_count, np.sqrt(np.mean((true_abc - abc_map)**2, axis=1)), 1)
+# p_abc = np.poly1d(z_abc)
+# plt.plot(event_count, p_abc(event_count), "g--", label="ABC regression", alpha=0.7)
+# plt.xlabel("Event count")
+# plt.ylabel("RMSE")
+# plt.legend()
+# plt.tight_layout()
+# plt.savefig("results/sim_study/rmse_vs_event_count.png")
+# plt.close()

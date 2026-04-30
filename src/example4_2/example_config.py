@@ -29,7 +29,8 @@ df_metro = pd.DataFrame(data['df_metro_values'],
 print("Bound on parameters: ", l_bounds_NS, u_bounds_NS)
 
 year = [2023]
-theta_true = np.array([np.log(3), np.log(0.9), 0.6, -0.6, 0.5])
+theta_true = np.array([np.log(1), np.log(0.1), 1.5, -0.6, 0.5])
+#theta_true = l_bounds_NS + 0.5 * (u_bounds_NS - l_bounds_NS)  # Set theta_true to the midpoint of the bounds for each parameter
 theta_true_with_year = np.hstack([theta_true, year]).reshape((1, -1))
 X_obs, Y_obs, metro_year_list_obs, _ = us.simulate_given_params(J=1, K=1, T=T, p=p, df_metro = df_metro, params=theta_true_with_year, verbose=False)
 print("True parameters (theta_true): ", theta_true)
@@ -37,8 +38,10 @@ print("Number of data points in observed data: ", X_obs[0].shape[0])
 
 #compute summary statistics for the observed data
 SS_obs = us.summary_statistics(X_obs[0], T, cluster_bins, percentiles, df_metro, metro_year_list_obs[0], verbose=False, p = p)
+cluster_bins_abc = np.logspace(np.log10(0.001), np.log10(12), 20)
+SS_obs_abc = us.summary_statistics(X_obs[0], T, cluster_bins_abc, percentiles, df_metro, metro_year_list_obs[0], verbose=False, p = p)
 
 #save the context variables to a .npz file for use in the ABC algorithm
-np.savez('results/example4_2/theta_true.npz', X_obs=X_obs, Y_obs=Y_obs, metro_year_list_obs=metro_year_list_obs, theta_true=theta_true, SS_obs=SS_obs)
+np.savez('results/example4_2/theta_true.npz', X_obs=X_obs, Y_obs=Y_obs, metro_year_list_obs=metro_year_list_obs, theta_true=theta_true, SS_obs=SS_obs, SS_obs_abc=SS_obs_abc)
 
 

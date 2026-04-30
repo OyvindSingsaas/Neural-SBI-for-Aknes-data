@@ -12,7 +12,7 @@ from sklearn.metrics import mean_squared_error
 
 
 print("Loading data...")
-data = np.load('data/NS_data_temp_wp_10RK.npz', allow_pickle=True)
+data = np.load('data/NS_data_temp_wp_10RK_small.npz', allow_pickle=True)
 params_train_normalized = data['params_train_normalized']
 SS_0_train_normalized_neural = data['SS_0_train_normalized_neural']
 response_train = data['response_train']
@@ -66,5 +66,5 @@ posterior = inference.build_posterior(density_estimator)
 print("Neural network posterior trained successfully.")
 
 #save the trained posterior for later use
-torch.save(posterior, 'neural_networks/trained_posterior_NS.pt')
+torch.save(posterior, 'neural_networks/trained_posterior_NS_small.pt')
 print("Neural network posterior trained and saved successfully.")
