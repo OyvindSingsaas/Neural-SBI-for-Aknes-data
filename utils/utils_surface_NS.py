@@ -133,7 +133,7 @@ def covariate_formater(df_metro, metro_year, x_p, T):
 
         X_cov[0] = df_temp.wp.values[:T]
         X_cov[1] = df_temp.temperature.values[:T]
-        #X_cov[2] = df_temp.N_geophones.values[:T] #-np.log(0.01) + np.log(df_temp.N_geophones.values[:T] + 0.01) #
+        X_cov[2] = df_temp.N_geophones.values[:T] #-np.log(0.01) + np.log(df_temp.N_geophones.values[:T] + 0.01) #
 
         #X_cov[0] = df_temp.doy_sin.values[:T]
         #X_cov[1] = df_temp.doy_cos.values[:T]
@@ -153,15 +153,15 @@ def simulate_given_params(J, K, T, p, df_metro, params, error = 0, verbose = Tru
             print(j ,"/", len(params))
         metro_year = [int(param[-1])]
         #metro_year = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022]
-        metro_year =[2023]
-        #metro_year = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
+        #metro_year =[2023]
+        metro_year = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
 
 
         X_cov = covariate_formater(df_metro, metro_year, x_p = p - 3, T = T)
 
         for k in range(K):
             beta = np.array([param[i] for i in range(2, len(param))]) 
-            X, _, _, _ = simulate_NS(T, X_cov, delta = param[0], sigma_2 = np.exp(param[1]), beta = beta, error = error)
+            X, _, _, _ = simulate_NS(T, X_cov, delta = param[0], sigma_2 = np.sqrt(np.exp(param[1])), beta = beta, error = error)
             X_list.append(X[X>0])
             metro_year_list.append(metro_year)
             Y[int(j*K + k)] = np.array([param[i] for i in range(len(param)-1)])

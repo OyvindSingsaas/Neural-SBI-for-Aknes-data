@@ -29,7 +29,6 @@ import optax
 from jaxopt import ScipyMinimize
 
 # -- sklearn --
-from sklearn.metrics import (mean_squared_error, precision_recall_curve, roc_curve, auc, accuracy_score, confusion_matrix)
 from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.calibration import calibration_curve
 from sklearn.linear_model import LogisticRegression
@@ -243,9 +242,12 @@ def ncl_mle(SS_test_normalized_neural, response_test, params_test_normalized_neu
                 print(f"  {i+1}/{N_test} samples done | converged: {len(converged_index)}/{i+1}")
         true_normalized = params_test_normalized_neural[response_test==1][:N_test][converged_index]
         true = true_normalized * params_std + params_mean
-        rmse = np.sqrt(mean_squared_error(true, mle_ncl[converged_index]))
-        print(f"  Convergence rate: {len(converged_index)}/{N_test} | RMSE: {rmse:.4f}")
-        return rmse
+        per_sample_mse = np.mean((true - mle_ncl[converged_index])**2, axis=1)
+        mse = np.mean(per_sample_mse)
+        rmse = np.sqrt(mse)
+        se_rmse = np.std(per_sample_mse, ddof=1) / (2 * rmse * np.sqrt(len(converged_index)))
+        print(f"  Convergence rate: {len(converged_index)}/{N_test} | RMSE: {rmse:.4f} ± {se_rmse:.4f}")
+        return rmse, se_rmse
 
 def run_test_ncl(r_min, r_max, N_bins, N_test, SS_normalized_neural, response_neural_normalized, params_neural_normalized, SS_test_normalized_neural, response_test_neural_normalized, params_test_neural_normalized, params_mean, params_std):
     print(f"  r_min={r_min:.3f}, r_max={r_max:.3f}, N_bins={N_bins}")
@@ -254,10 +256,10 @@ def run_test_ncl(r_min, r_max, N_bins, N_test, SS_normalized_neural, response_ne
     classification_NN_NS = train_ncl(response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_normalized_neural=SS_normalized_neural, sub_model=sub_model, gs=len(SS_normalized_neural[0]))
     grid = us.LHS(N_grid, l_bounds_NS, u_bounds_NS, 2023)[:,:-1]
     grid_norm = (grid - params_mean) / params_std
-    rmse_ncl = ncl_mle(SS_test_normalized_neural=SS_test_normalized_neural, response_test=response_test_neural_normalized, params_test_normalized_neural=params_test_neural_normalized ,classification_NN_NS=classification_NN_NS, params_mean=params_mean, params_std=params_std, grid_norm=grid_norm, N_test=N_test)
+    rmse_ncl, se_ncl = ncl_mle(SS_test_normalized_neural=SS_test_normalized_neural, response_test=response_test_neural_normalized, params_test_normalized_neural=params_test_neural_normalized ,classification_NN_NS=classification_NN_NS, params_mean=params_mean, params_std=params_std, grid_norm=grid_norm, N_test=N_test)
     del sub_model, classification_NN_NS
     keras.backend.clear_session()
-    return rmse_ncl
+    return rmse_ncl, se_ncl
 
 def train_nf(params_normalized, SS_normalized, params_mean, params_std):
     print(f"\nTraining NF (n_train={len(params_normalized)}, input_dim={SS_normalized.shape[1]}, output_dim={len(l_bounds_NS)})...")
@@ -288,13 +290,16 @@ def run_test_nf(params_normalized, SS_normalized, params_mean, params_std, param
         map_estimates[i] = map_nf(posterior, SS_test_normalized[i].reshape(1,-1)).reshape(-1)
         if (i + 1) % log_every == 0 or (i + 1) == N_test:
             print(f"  {i+1}/{N_test} samples done")
-    true_normalized = params_test_normalized[:N_test]
+    true_normalized = params_test_normalized[:N_test].numpy()
     true = true_normalized * params_std + params_mean
     map_nf_denorm = map_estimates * params_std + params_mean
-    rmse_nf = np.sqrt(mean_squared_error(true, map_nf_denorm))
-    print(f"  NF RMSE: {rmse_nf:.4f}")
+    per_sample_mse = np.mean((true - map_nf_denorm)**2, axis=1)
+    mse = np.mean(per_sample_mse)
+    rmse_nf = np.sqrt(mse)
+    se_nf = np.std(per_sample_mse, ddof=1) / (2 * rmse_nf * np.sqrt(N_test))
+    print(f"  NF RMSE: {rmse_nf:.4f} ± {se_nf:.4f}")
     del posterior
-    return rmse_nf
+    return rmse_nf, se_nf
 
 def format_data_nf(params_neural_normalized, SS_normalized_neural, params_test_neural_normalized, SS_test_normalized_neural, response_neural_normalized, response_test_neural_normalized):
     params_normalized_nf, SS_normalized_nf, params_test_normalized_nf, SS_test_normalized_nf = params_neural_normalized[response_neural_normalized==1], SS_normalized_neural[response_neural_normalized==1], params_test_neural_normalized[response_test_neural_normalized==1], SS_test_normalized_neural[response_test_neural_normalized==1]
@@ -306,66 +311,78 @@ def format_data_nf(params_neural_normalized, SS_normalized_neural, params_test_n
 
 def test_rmin(r_min, r_max, N_bins, N_test, log_cluster = True):
         rmse_list_ncl = []
+        se_list_ncl = []
         rmse_list_nf = []
+        se_list_nf = []
         print(f"\n=== Searching r_min ({len(r_min)} values, r_max={r_max}, N_bins={N_bins}) ===")
         for i, r in enumerate(r_min):
             print(f"\n[{i+1}/{len(r_min)}] r_min = {r:.4f}")
             #NCL
             response_neural_normalized, params_neural_normalized, SS_normalized_neural, params_mean, params_std, SS_mean, SS_std = format_data(X_train, Y_train, params_sample_train_NS, metro_year_list_train, df_metro, r_min=r, r_max=r_max, N_bins=N_bins, log_cluster=log_cluster)
             response_test_neural_normalized, params_test_neural_normalized, SS_test_normalized_neural, _, _, _, _ = format_data(X_test, Y_test, params_sample_test_NS, metro_year_list_test, df_metro, r_min=r, r_max=r_max, N_bins=N_bins, params_mean=params_mean, params_std=params_std, SS_mean=SS_mean, SS_std=SS_std, log_cluster=log_cluster)
-            rmse_ncl = run_test_ncl(r_min=r, r_max=r_max, N_bins=N_bins, N_test=N_test, SS_normalized_neural=SS_normalized_neural, response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_test_normalized_neural=SS_test_normalized_neural, response_test_neural_normalized=response_test_neural_normalized, params_test_neural_normalized=params_test_neural_normalized, params_mean=params_mean, params_std=params_std)
+            rmse_ncl, se_ncl = run_test_ncl(r_min=r, r_max=r_max, N_bins=N_bins, N_test=N_test, SS_normalized_neural=SS_normalized_neural, response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_test_normalized_neural=SS_test_normalized_neural, response_test_neural_normalized=response_test_neural_normalized, params_test_neural_normalized=params_test_neural_normalized, params_mean=params_mean, params_std=params_std)
             rmse_list_ncl.append(rmse_ncl)
-            print(f"  => RMSE NCL: {rmse_ncl:.4f}")
+            se_list_ncl.append(se_ncl)
+            print(f"  => RMSE NCL: {rmse_ncl:.4f} ± {se_ncl:.4f}")
             #NF
             params_normalized_nf, SS_normalized_nf, params_test_normalized_nf, SS_test_normalized_nf = format_data_nf(params_neural_normalized, SS_normalized_neural, params_test_neural_normalized, SS_test_normalized_neural, response_neural_normalized, response_test_neural_normalized)
-            rmse_nf = run_test_nf(params_normalized_nf, SS_normalized_nf, params_mean, params_std, params_test_normalized_nf, SS_test_normalized_nf, N_test)
+            rmse_nf, se_nf = run_test_nf(params_normalized_nf, SS_normalized_nf, params_mean, params_std, params_test_normalized_nf, SS_test_normalized_nf, N_test)
             rmse_list_nf.append(rmse_nf)
-            print(f"  => RMSE NF: {rmse_nf:.4f}")
+            se_list_nf.append(se_nf)
+            print(f"  => RMSE NF: {rmse_nf:.4f} ± {se_nf:.4f}")
         print(f"\nBest for NCL r_min: {r_min[np.argmin(rmse_list_ncl)]:.4f} (RMSE={min(rmse_list_ncl):.4f})")
         print(f"\nBest for NF r_min: {r_min[np.argmin(rmse_list_nf)]:.4f} (RMSE={min(rmse_list_nf):.4f})")
-        return rmse_list_ncl, rmse_list_nf
+        return rmse_list_ncl, se_list_ncl, rmse_list_nf, se_list_nf
 
 def test_rmax(r_min, r_max, N_bins, N_test, log_cluster = True):
         rmse_list_ncl = []
+        se_list_ncl = []
         rmse_list_nf = []
+        se_list_nf = []
         print(f"\n=== Searching r_max ({len(r_max)} values, r_min={r_min:.4f}, N_bins={N_bins}) ===")
         for i, r in enumerate(r_max):
             print(f"\n[{i+1}/{len(r_max)}] r_max = {r:.4f}")
             #NCL
             response_neural_normalized, params_neural_normalized, SS_normalized_neural, params_mean, params_std, SS_mean, SS_std = format_data(X_train, Y_train, params_sample_train_NS, metro_year_list_train, df_metro, r_min=r_min, r_max=r, N_bins=N_bins, log_cluster=log_cluster)
             response_test_neural_normalized, params_test_neural_normalized, SS_test_normalized_neural, _, _, _, _ = format_data(X_test, Y_test, params_sample_test_NS, metro_year_list_test, df_metro, r_min=r_min, r_max=r, N_bins=N_bins, params_mean=params_mean, params_std=params_std, SS_mean=SS_mean, SS_std=SS_std, log_cluster=log_cluster)
-            rmse_ncl = run_test_ncl(r_min=r_min, r_max=r, N_bins=N_bins, N_test=N_test, SS_normalized_neural=SS_normalized_neural, response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_test_normalized_neural=SS_test_normalized_neural, response_test_neural_normalized=response_test_neural_normalized, params_test_neural_normalized=params_test_neural_normalized, params_mean=params_mean, params_std=params_std)
+            rmse_ncl, se_ncl = run_test_ncl(r_min=r_min, r_max=r, N_bins=N_bins, N_test=N_test, SS_normalized_neural=SS_normalized_neural, response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_test_normalized_neural=SS_test_normalized_neural, response_test_neural_normalized=response_test_neural_normalized, params_test_neural_normalized=params_test_neural_normalized, params_mean=params_mean, params_std=params_std)
             rmse_list_ncl.append(rmse_ncl)
-            print(f"  => RMSE NCL: {rmse_ncl:.4f}")
+            se_list_ncl.append(se_ncl)
+            print(f"  => RMSE NCL: {rmse_ncl:.4f} ± {se_ncl:.4f}")
             #NF
             params_normalized_nf, SS_normalized_nf, params_test_normalized_nf, SS_test_normalized_nf = format_data_nf(params_neural_normalized, SS_normalized_neural, params_test_neural_normalized, SS_test_normalized_neural, response_neural_normalized, response_test_neural_normalized)
-            rmse_nf = run_test_nf(params_normalized_nf, SS_normalized_nf, params_mean, params_std, params_test_normalized_nf, SS_test_normalized_nf, N_test)
+            rmse_nf, se_nf = run_test_nf(params_normalized_nf, SS_normalized_nf, params_mean, params_std, params_test_normalized_nf, SS_test_normalized_nf, N_test)
             rmse_list_nf.append(rmse_nf)
-            print(f"  => RMSE NF: {rmse_nf:.4f}")
+            se_list_nf.append(se_nf)
+            print(f"  => RMSE NF: {rmse_nf:.4f} ± {se_nf:.4f}")
         print(f"\nBest for NCL r_max: {r_max[np.argmin(rmse_list_ncl)]:.4f} (RMSE={min(rmse_list_ncl):.4f})")
         print(f"\nBest for NF r_max: {r_max[np.argmin(rmse_list_nf)]:.4f} (RMSE={min(rmse_list_nf):.4f})")
-        return rmse_list_ncl, rmse_list_nf
+        return rmse_list_ncl, se_list_ncl, rmse_list_nf, se_list_nf
 
 def test_nbins(r_min, r_max, nbins_plan, N_test, log_cluster = True):
         rmse_list_ncl = []
+        se_list_ncl = []
         rmse_list_nf = []
+        se_list_nf = []
         print(f"\n=== Searching N_bins ({len(nbins_plan)} values, r_min={r_min:.4f}, r_max={r_max:.4f}) ===")
         for i, nb in enumerate(nbins_plan):
             print(f"\n[{i+1}/{len(nbins_plan)}] N_bins = {nb}")
             #NCL
             response_neural_normalized, params_neural_normalized, SS_normalized_neural, params_mean, params_std, SS_mean, SS_std = format_data(X_train, Y_train, params_sample_train_NS, metro_year_list_train, df_metro, r_min=r_min, r_max=r_max, N_bins=nb, log_cluster=log_cluster)
             response_test_neural_normalized, params_test_neural_normalized, SS_test_normalized_neural, _, _, _, _ = format_data(X_test, Y_test, params_sample_test_NS, metro_year_list_test, df_metro, r_min=r_min, r_max=r_max, N_bins=nb, params_mean=params_mean, params_std=params_std, SS_mean=SS_mean, SS_std=SS_std, log_cluster=log_cluster)
-            rmse_ncl = run_test_ncl(r_min=r_min, r_max=r_max, N_bins=nb, N_test=N_test, SS_normalized_neural=SS_normalized_neural, response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_test_normalized_neural=SS_test_normalized_neural, response_test_neural_normalized=response_test_neural_normalized, params_test_neural_normalized=params_test_neural_normalized, params_mean=params_mean, params_std=params_std)
+            rmse_ncl, se_ncl = run_test_ncl(r_min=r_min, r_max=r_max, N_bins=nb, N_test=N_test, SS_normalized_neural=SS_normalized_neural, response_neural_normalized=response_neural_normalized, params_neural_normalized=params_neural_normalized, SS_test_normalized_neural=SS_test_normalized_neural, response_test_neural_normalized=response_test_neural_normalized, params_test_neural_normalized=params_test_neural_normalized, params_mean=params_mean, params_std=params_std)
             rmse_list_ncl.append(rmse_ncl)
-            print(f"  => RMSE NCL: {rmse_ncl:.4f}")
+            se_list_ncl.append(se_ncl)
+            print(f"  => RMSE NCL: {rmse_ncl:.4f} ± {se_ncl:.4f}")
             #NF
             params_normalized_nf, SS_normalized_nf, params_test_normalized_nf, SS_test_normalized_nf = format_data_nf(params_neural_normalized, SS_normalized_neural, params_test_neural_normalized, SS_test_normalized_neural, response_neural_normalized, response_test_neural_normalized)
-            rmse_nf = run_test_nf(params_normalized_nf, SS_normalized_nf, params_mean, params_std, params_test_normalized_nf, SS_test_normalized_nf, N_test)
+            rmse_nf, se_nf = run_test_nf(params_normalized_nf, SS_normalized_nf, params_mean, params_std, params_test_normalized_nf, SS_test_normalized_nf, N_test)
             rmse_list_nf.append(rmse_nf)
-            print(f"  => RMSE NF: {rmse_nf:.4f}")
+            se_list_nf.append(se_nf)
+            print(f"  => RMSE NF: {rmse_nf:.4f} ± {se_nf:.4f}")
         print(f"\nBest for NCL N_bins: {nbins_plan[np.argmin(rmse_list_ncl)]} (RMSE={min(rmse_list_ncl):.4f})")
         print(f"\nBest for NF N_bins: {nbins_plan[np.argmin(rmse_list_nf)]} (RMSE={min(rmse_list_nf):.4f})")
-        return rmse_list_ncl, rmse_list_nf
+        return rmse_list_ncl, se_list_ncl, rmse_list_nf, se_list_nf
 
 #General settings
 K = 3
@@ -378,61 +395,131 @@ N_grid = 1000
 sub_model_epochs = 100
 sub_model_lr = 0.001
 
-def main():
-    N_test = 50
+def main_0():
+    N_test = 100
+    log_cluster = True
+    N_bins = 25  # fixed high resolution for r_min and r_max searches
+    r_min_configs = 5
+    r_min_plan = np.logspace(np.log10(0.001), np.log10(2), r_min_configs)
+    r_max = 10
+    print("Testing r_min...")
+    print("r_min plan:", r_min_plan)
+    rmse_list_ncl_rmin, se_list_ncl_rmin, rmse_list_nf_rmin, se_list_nf_rmin = test_rmin(r_min_plan, r_max, N_bins, N_test=N_test, log_cluster=log_cluster)
+    best_rmin_idx_ncl = int(np.argmin(rmse_list_ncl_rmin))
+    best_rmin_idx_nf = int(np.argmin(rmse_list_nf_rmin))
 
-    # N_bins = 25  # fixed high resolution for r_min and r_max searches
-    # r_min_configs = 5
-    # r_min_plan = np.logspace(np.log10(0.001), np.log10(3), r_min_configs)
-    # r_max = 10
-    # print("Testing r_min...")
-    # print("r_min plan:", r_min_plan)
-    # rmse_list_ncl_rmin, rmse_list_nf_rmin = test_rmin(r_min_plan, r_max, N_bins, N_test=N_test)
-    # best_rmin_idx_ncl = int(np.argmin(rmse_list_ncl_rmin))
-    # best_rmin_idx_nf = int(np.argmin(rmse_list_nf_rmin))
-
-    # r_max_configs = 5
-    # r_min = min(r_min_plan[best_rmin_idx_ncl], r_min_plan[best_rmin_idx_nf])   
-    # r_max_plan = np.linspace(r_min, 10, r_max_configs+1)[1:] 
-    # print("\nTesting r_max...")
-    # print("r_max plan:", r_max_plan)
-    # rmse_list_ncl_rmax, rmse_list_nf_rmax = test_rmax(r_min, r_max_plan, N_bins, N_test=N_test)
-    # best_rmax_idx_ncl = int(np.argmin(rmse_list_ncl_rmax))
-    # best_rmax_idx_nf = int(np.argmin(rmse_list_nf_rmax))
+    r_max_configs = 5
+    r_min = min(r_min_plan[best_rmin_idx_ncl], r_min_plan[best_rmin_idx_nf])   
+    r_max_plan = np.linspace(r_min, 10, r_max_configs+1)[1:] 
+    print("\nTesting r_max...")
+    print("r_max plan:", r_max_plan)
+    rmse_list_ncl_rmax, se_list_ncl_rmax, rmse_list_nf_rmax, se_list_nf_rmax = test_rmax(r_min, r_max_plan, N_bins, N_test=N_test, log_cluster=log_cluster)
+    best_rmax_idx_ncl = int(np.argmin(rmse_list_ncl_rmax))
+    best_rmax_idx_nf = int(np.argmin(rmse_list_nf_rmax))
 
     nbins_configs = 10
     nbins_plan = np.linspace(1, 30, nbins_configs, dtype=int)
-    r_max = 3
-    r_min = 0.001
+    r_max = max(r_max_plan[best_rmax_idx_ncl], r_max_plan[best_rmax_idx_nf])
     print("\nTesting N_bins...")
     print("N_bins plan:", nbins_plan)
-    rmse_list_ncl_nbins, rmse_list_nf_nbins = test_nbins(r_min, r_max, nbins_plan, N_test=N_test, log_cluster=False)
+    rmse_list_ncl_nbins, se_list_ncl_nbins, rmse_list_nf_nbins, se_list_nf_nbins = test_nbins(r_min, r_max, nbins_plan, N_test=N_test, log_cluster=log_cluster)
     best_nbins_idx_ncl = int(np.argmin(rmse_list_ncl_nbins))
     best_nbins_idx_nf = int(np.argmin(rmse_list_nf_nbins))
 
-    np.savez("results/lag_search/lagsearch_nbins_linear.npz",
-        rmse_list_ncl_nbins=rmse_list_ncl_nbins,
-        rmse_list_nf_nbins=rmse_list_nf_nbins,
-        nbins_values=nbins_plan)
+    np.savez("results/lag_search/lagsearch_v1.npz",
+            rmse_list_ncl_r_min=rmse_list_ncl_rmin,
+            se_list_ncl_r_min=se_list_ncl_rmin,
+            rmse_list_nf_r_min=rmse_list_nf_rmin,
+            se_list_nf_r_min=se_list_nf_rmin,
+            r_min_values=r_min_plan,
+            rmse_list_ncl_r_max=rmse_list_ncl_rmax,
+            se_list_ncl_r_max=se_list_ncl_rmax,
+            rmse_list_nf_r_max=rmse_list_nf_rmax,
+            se_list_nf_r_max=se_list_nf_rmax,
+            r_max_values=r_max_plan,
+            rmse_list_ncl_nbins=rmse_list_ncl_nbins,
+            se_list_ncl_nbins=se_list_ncl_nbins,
+            rmse_list_nf_nbins=rmse_list_nf_nbins,
+            se_list_nf_nbins=se_list_nf_nbins,
+            nbins_values=nbins_plan)
+    
+  
+    N_bins = nbins_plan[best_nbins_idx_ncl]  # or best_nbins_idx_nf, they should be close
+    r_min_configs = 5
+    r_min_plan = np.logspace(np.log10(0.001), np.log10(r_max), r_min_configs)
+    r_min_plan = r_min_plan[r_min_plan < r_max]  # Ensure r_min values are less than the best r_max
+    print("Testing r_min...")
+    print("r_min plan:", r_min_plan)
+    rmse_list_ncl_rmin, se_list_ncl_rmin, rmse_list_nf_rmin, se_list_nf_rmin = test_rmin(r_min_plan, r_max, N_bins, N_test=N_test, log_cluster=log_cluster)
+    best_rmin_idx_ncl = int(np.argmin(rmse_list_ncl_rmin))
+    best_rmin_idx_nf = int(np.argmin(rmse_list_nf_rmin))
+
+    r_max_configs = 5
+    r_min = min(r_min_plan[best_rmin_idx_ncl], r_min_plan[best_rmin_idx_nf])   
+    r_max_plan = np.logspace(np.log10(r_min), np.log10(10), r_max_configs)
+    r_max_plan = r_max_plan[r_max_plan > r_min]  # Ensure r_max values are greater than the best r_min
+    print("\nTesting r_max...")
+    print("r_max plan:", r_max_plan)
+    rmse_list_ncl_rmax, se_list_ncl_rmax, rmse_list_nf_rmax, se_list_nf_rmax = test_rmax(r_min, r_max_plan, N_bins, N_test=N_test, log_cluster=log_cluster)
+    best_rmax_idx_ncl = int(np.argmin(rmse_list_ncl_rmax))
+    best_rmax_idx_nf = int(np.argmin(rmse_list_nf_rmax))
+
+    nbins_configs = 10
+    nbins_plan = np.linspace(1, 30, nbins_configs, dtype=int)
+    r_max = max(r_max_plan[best_rmax_idx_ncl], r_max_plan[best_rmax_idx_nf])
+    r_min = min(r_min_plan[best_rmin_idx_ncl], r_min_plan[best_rmin_idx_nf])
+    print("\nTesting N_bins...")
+    print("N_bins plan:", nbins_plan)
+    rmse_list_ncl_nbins, se_list_ncl_nbins, rmse_list_nf_nbins, se_list_nf_nbins = test_nbins(r_min, r_max, nbins_plan, N_test=N_test, log_cluster=log_cluster)
+    best_nbins_idx_ncl = int(np.argmin(rmse_list_ncl_nbins))
+    best_nbins_idx_nf = int(np.argmin(rmse_list_nf_nbins))
+
+    np.savez("results/lag_search/lagsearch_v2.npz",
+            rmse_list_ncl_r_min=rmse_list_ncl_rmin,
+            se_list_ncl_r_min=se_list_ncl_rmin,
+            rmse_list_nf_r_min=rmse_list_nf_rmin,
+            se_list_nf_r_min=se_list_nf_rmin,
+            r_min_values=r_min_plan,
+            rmse_list_ncl_r_max=rmse_list_ncl_rmax,
+            se_list_ncl_r_max=se_list_ncl_rmax,
+            rmse_list_nf_r_max=rmse_list_nf_rmax,
+            se_list_nf_r_max=se_list_nf_rmax,
+            r_max_values=r_max_plan,
+            rmse_list_ncl_nbins=rmse_list_ncl_nbins,
+            se_list_ncl_nbins=se_list_ncl_nbins,
+            rmse_list_nf_nbins=rmse_list_nf_nbins,
+            se_list_nf_nbins=se_list_nf_nbins,
+            nbins_values=nbins_plan)
+
+def main():
+    N_test = 100
+    log_cluster = True
+    nbins_configs = 10
+    nbins_plan = np.linspace(1, 30, nbins_configs, dtype=int)
+    r_min = 0.01  # fixed based on prior search
+    r_max = 5     # fixed based on prior search
+    print("\nTesting N_bins...")
+    print("N_bins plan:", nbins_plan)
+    rmse_list_ncl_nbins, se_list_ncl_nbins, rmse_list_nf_nbins, se_list_nf_nbins = test_nbins(r_min, r_max, nbins_plan, N_test=N_test, log_cluster=log_cluster)
+    best_nbins_idx_ncl = int(np.argmin(rmse_list_ncl_nbins))
+    best_nbins_idx_nf = int(np.argmin(rmse_list_nf_nbins))
     print(f"\nBest for NCL N_bins: {nbins_plan[best_nbins_idx_ncl]} (RMSE={min(rmse_list_ncl_nbins):.4f})")
     print(f"\nBest for NF N_bins: {nbins_plan[best_nbins_idx_nf]} (RMSE={min(rmse_list_nf_nbins):.4f})")
-
-    # np.savez("results/lag_search/lagsearch.npz",
-    #         rmse_list_ncl_r_min=rmse_list_ncl_rmin,
-    #         rmse_list_nf_r_min=rmse_list_nf_rmin,
-    #         r_min_values=r_min_plan,
-    #         rmse_list_ncl_r_max=rmse_list_ncl_rmax,
-    #         rmse_list_nf_r_max=rmse_list_nf_rmax,
-    #         r_max_values=r_max_plan,
-    #         rmse_list_ncl_nbins=rmse_list_ncl_nbins,
-    #         rmse_list_nf_nbins=rmse_list_nf_nbins,
-    #         nbins_values=nbins_plan)
-
-    # print_summary("NCL", N_test, N_bins, r_min_plan, r_max_plan, nbins_plan,
-    #               rmse_list_ncl_rmin, rmse_list_ncl_rmax, rmse_list_ncl_nbins,
-    #               best_rmin_idx_ncl, best_rmax_idx_ncl, best_nbins_idx_ncl)
-    # print_summary("NF", N_test, N_bins, r_min_plan, r_max_plan, nbins_plan,
-    #               rmse_list_nf_rmin, rmse_list_nf_rmax, rmse_list_nf_nbins,
-    #               best_rmin_idx_nf, best_rmax_idx_nf, best_nbins_idx_nf)
-
+    np.savez("results/lag_search/lagsearch_only_nbins.npz",
+            rmse_list_ncl_r_min=None,
+            se_list_ncl_r_min=None,
+            rmse_list_nf_r_min=None,
+            se_list_nf_r_min=None,
+            r_min_values=r_min,
+            rmse_list_ncl_r_max=None,
+            se_list_ncl_r_max=None,
+            rmse_list_nf_r_max=None,
+            se_list_nf_r_max=None,
+            r_max_values=r_max,
+            rmse_list_ncl_nbins=rmse_list_ncl_nbins,
+            se_list_ncl_nbins=se_list_ncl_nbins,
+            rmse_list_nf_nbins=rmse_list_nf_nbins,
+            se_list_nf_nbins=se_list_nf_nbins,
+            nbins_values=nbins_plan)
+     
 main()

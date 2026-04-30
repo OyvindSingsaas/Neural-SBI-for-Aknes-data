@@ -9,7 +9,7 @@ import utils.utils_surface_NS as us
 
 
 print("Loading data...")
-data = np.load('data/NS_data_temp_wp_10RK.npz', allow_pickle=True)
+data = np.load('data/NS_data_temp_wp_10RK_small.npz', allow_pickle=True)
 params_train_normalized = data['params_train_normalized']
 SS_0_train_normalized_neural = data['SS_0_train_normalized_neural']
 response_train = data['response_train']
@@ -33,15 +33,16 @@ df_metro = pd.DataFrame(data['df_metro_values'],
                     columns=data['df_metro_columns'],
                     index=data['df_metro_index'])
 print("Data loaded successfully.")
-N_train = 500
 year = [2023]
 gs = len(SS_0_train_normalized_neural[0])  # Dimension of summary statistics
 print("Dimension of summary statistics:", gs)
+N_train = len(params_test_normalized[response_test == 1])
+print("Number of test samples with response = 1:", N_train)
 true_normalized = params_test_normalized[response_test == 1][:N_train,:]
 true = true_normalized * params_std + params_mean
 
 print("\nLoading trained normalizing flow posterior...")
-posterior = torch.load("neural_networks/trained_posterior_NS.pt")
+posterior = torch.load("neural_networks/trained_posterior_NS_small.pt")
 print("Posterior loaded successfully.")
 print("\nSampling from the normalizing flow posterior...")
 SS_nf = torch.tensor(SS_0_test_normalized_neural[response_test == 1], dtype=torch.float32)
@@ -62,4 +63,7 @@ print("\nComputing MAP estimate from the normalizing flow posterior...")
 nf_mean_normalized = np.mean(posterior_samples_normalized, axis=1)#posterior.map(x=SS_nf)
 nf_mean = nf_map_normalized * params_std + params_mean
 #save the samples and MAP estimate
-np.savez("results/sim_study/nf.npz", posterior_samples=postetrior_samples, posterior_samples_normalized =  posterior_samples_normalized, nf_map=nf_map, nf_map_normalized=nf_map_normalized, N_train=N_train, true=true, true_normalized=true_normalized)
+np.savez("results/sim_study/nf_small.npz", posterior_samples=postetrior_samples,
+          posterior_samples_normalized =  posterior_samples_normalized,
+            nf_map=nf_map, nf_map_normalized=nf_map_normalized, N_train=N_train,
+              true=true, true_normalized=true_normalized)

@@ -215,7 +215,7 @@ ax.scatter(*tsne_obs, s=120, marker="*", color="red", zorder=5, label="Observed"
 #ax.set_title("t-SNE")
 ax.set_xlabel("Dim 1")
 ax.set_ylabel("Dim 2")
-ax.legend(fontsize=8)
+#ax.legend(fontsize=14)
 plt.tight_layout()
 plt.savefig("results/aknes/SS_placement_tsne.png", dpi=150, bbox_inches="tight")
 plt.close()

@@ -36,41 +36,44 @@ def main():
 
     t_0 = time.time()  # Start timer for the entire ABC process
     # Step 1: Pilot run to fit linear model
-    k_pilot = 1000  # Number of pilot simulations
+    k_pilot = 10000  # Number of pilot simulations
     k_abc = 100  # Number of posterior samples to obtain from ABC
     m = 50  # Number of data points for each simulation
     epsilon_percentile = 1  # Percentile for determining the tolerance level (epsilon) in ABC rejection sampling
-    lasso_penalty = 0.1  # Lasso penalty for linear regression in the pilot run
+    lasso_penalty = 0.01  # Lasso penalty for linear regression in the pilot run
     dim = len(l_bounds_NS)  # Dimensionality of the parameter space
     max_iter = 10000  # Maximum number of iterations to prevent infinite loops in rejection sampling
+    cluster_bins = np.logspace(np.log10(0.001), np.log10(12), 20)
 
     # Load the observed summary statistics and true parameter values from the example configuration
     example_data = np.load('results/example4_2/theta_true.npz', allow_pickle=True)
     SS_obs = example_data['SS_obs']
+    SS_obs_abc = example_data['SS_obs_abc']
     theta_true = example_data['theta_true']
 
     theta_true_normalized = (theta_true - params_mean) / params_std
     SS_obs_normalized = (SS_obs - SS_mean) / SS_std
 
     print("SS_obs = ", SS_obs)
+    print("SS_obs_abc = ", SS_obs_abc)
     print("theta_true = ", theta_true)
     print("\nRunning ABC pilot run to fit linear model...")
-    var_theta, epsilon, a_array, b_array = abc.abc_pilot_run(k_pilot, m, SS_obs=SS_obs_normalized, dim=dim, epsilon_percentile=epsilon_percentile,
+    var_theta, epsilon, a_array, b_array = abc.abc_pilot_run(k_pilot, m, SS_obs=SS_obs_abc, dim=dim, epsilon_percentile=epsilon_percentile,
                                                               l_bounds=l_bounds_NS, u_bounds=u_bounds_NS, df_metro=df_metro, T=T, cluster_bins=cluster_bins,
-                                                                percentiles=percentiles, SS_mean=SS_mean, SS_std=SS_std, lasso_penalty=lasso_penalty)
+                                                                percentiles=percentiles, lasso_penalty=lasso_penalty)
     print("Empirical variance of the fitted parameter vectors from pilot run:", var_theta)
     print("Tolerance level (epsilon) based on the specified percentile:", epsilon)
     print("\n Linear model coefficients (a_array):", a_array)
     print("\n Linear model coefficients (b_array):", b_array)
 
     print("\nRunning ABC rejection sampling...")
-    posterior_samples_theta, posterior_samples_SS = abc.abc_rejection_sampling(k_abc, SS_obs_normalized, epsilon, m, dim, a_array, b_array, var_theta, l_bounds=l_bounds_NS, u_bounds=u_bounds_NS,
-                                                                                df_metro=df_metro, T=T, cluster_bins=cluster_bins, percentiles=percentiles, SS_mean=SS_mean, SS_std=SS_std, max_iter = max_iter)
+    posterior_samples_theta, posterior_samples_SS = abc.abc_rejection_sampling(k_abc, SS_obs_abc, epsilon, m, dim, a_array, b_array, var_theta, l_bounds=l_bounds_NS, u_bounds=u_bounds_NS,
+                                                                                df_metro=df_metro, T=T, cluster_bins=cluster_bins, percentiles=percentiles, max_iter = max_iter)
     t_1 = time.time()  # End timer for the entire ABC process
     print(f"ABC sampling completed in {t_1 - t_0:.2f} seconds.")
 
     #Save posterior samples and summary statistics
-    np.savez('results/NS_ABC_example.npz', posterior_samples_theta=posterior_samples_theta, posterior_samples_SS=posterior_samples_SS, SS_obs=SS_obs, theta_true=theta_true, theta_true_normalized=theta_true_normalized, SS_obs_normalized=SS_obs_normalized)
+    np.savez('results/NS_ABC_example.npz', posterior_samples_theta=posterior_samples_theta, posterior_samples_SS=posterior_samples_SS, SS_obs=SS_obs, SS_obs_abc=SS_obs_abc, theta_true=theta_true, theta_true_normalized=theta_true_normalized, SS_obs_normalized=SS_obs_normalized)
 
     posterior_samples_theta_normalized = (posterior_samples_theta - params_mean) / params_std
 
